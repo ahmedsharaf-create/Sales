@@ -29,7 +29,7 @@ import {
   ChevronRight,
   Loader2,
   Download,
-  Filter,
+  Filter, 
   BarChart3,
   Target,
   Calendar,
@@ -45,39 +45,70 @@ import {
   Mail
 } from 'lucide-react';
 
-// --- Firebase Configuration ---
+// --- Firebase Configuration Helper ---
+// Using a safer method to access environment variables to avoid 'import.meta' errors in some environments
 const getFirebaseConfig = () => {
   try {
-    if (typeof __firebase_config !== 'undefined' && __firebase_config) {
-      return JSON.parse(__firebase_config);
+    // Check for global window configuration (often used in Canvas/static previews)
+    if (typeof window !== 'undefined' && window.__firebase_config) {
+      return typeof window.__firebase_config === 'string' ? JSON.parse(window.__firebase_config) : window.__firebase_config;
     }
-    if (window && window.__firebase_config) {
-      return typeof window.__firebase_config === 'string' 
-        ? JSON.parse(window.__firebase_config) 
-        : window.__firebase_config;
+    
+    // Fallback for Vite environment (Standard for Vercel/GitHub deployments)
+    // We use a try block and indirect access to prevent build-time errors
+    const viteEnv = (function() {
+      try { return import.meta.env; } catch (e) { return {}; }
+    })();
+
+    if (viteEnv && viteEnv.VITE_FIREBASE_API_KEY) {
+      return {
+        apiKey: viteEnv.VITE_FIREBASE_API_KEY,
+        authDomain: viteEnv.VITE_FIREBASE_AUTH_DOMAIN,
+        projectId: viteEnv.VITE_FIREBASE_PROJECT_ID,
+        storageBucket: viteEnv.VITE_FIREBASE_STORAGE_BUCKET,
+        messagingSenderId: viteEnv.VITE_FIREBASE_MESSAGING_SENDER_ID,
+        appId: viteEnv.VITE_FIREBASE_APP_ID,
+      };
     }
   } catch (e) {
-    console.warn("Firebase config parsing failed:", e);
+    console.warn("Firebase configuration retrieval failed:", e);
   }
-  return { apiKey: "" };
+  return null;
 };
 
 const firebaseConfig = getFirebaseConfig();
 let app, auth, db;
 
 if (firebaseConfig && firebaseConfig.apiKey) {
-  app = initializeApp(firebaseConfig);
-  auth = getAuth(app);
-  db = getFirestore(app);
+  try {
+    app = initializeApp(firebaseConfig);
+    auth = getAuth(app);
+    db = getFirestore(app);
+  } catch (e) {
+    console.error("Firebase init error:", e);
+  }
 }
 
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'cash-shop-sales-v3';
+// Safely get App ID
+const getAppId = () => {
+  try {
+    const viteAppId = (function() {
+      try { return import.meta.env.VITE_APP_ID; } catch (e) { return null; }
+    })();
+    return viteAppId || (typeof __app_id !== 'undefined' ? __app_id : 'cash-shop-sales-v3');
+  } catch (e) {
+    return 'cash-shop-sales-v3';
+  }
+};
+
+const appId = getAppId();
 
 export default function App() {
   const [user, setUser] = useState(null);
   const [userProfile, setUserProfile] = useState(null);
   const [view, setView] = useState('login'); 
   const [loading, setLoading] = useState(true);
+  const [configMissing, setConfigMissing] = useState(!firebaseConfig || !firebaseConfig.apiKey);
   
   // Data State
   const [areaManagers, setAreaManagers] = useState([]);
@@ -88,20 +119,23 @@ export default function App() {
 
   // Auth Observer
   useEffect(() => {
-    if (!auth) {
+    if (configMissing || !auth) {
       setLoading(false);
       return;
     }
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
       if (u) {
         setUser(u);
-        const userDoc = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.uid));
-        if (userDoc.exists()) {
-          const profile = userDoc.data();
-          setUserProfile(profile);
-          setView('dashboard');
-        } else {
-          setView('onboarding');
+        try {
+          const userDoc = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.uid));
+          if (userDoc.exists()) {
+            setUserProfile(userDoc.data());
+            setView('dashboard');
+          } else {
+            setView('onboarding');
+          }
+        } catch (e) {
+          console.error("Error fetching user profile:", e);
         }
       } else {
         setUser(null);
@@ -111,13 +145,12 @@ export default function App() {
       setLoading(false);
     });
     return () => unsubscribe();
-  }, []);
+  }, [configMissing]);
 
   // Real-time Data Sync
   useEffect(() => {
     if (!user || !userProfile || !db) return;
 
-    // Config Sync
     const settingsRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config');
     const unsubSettings = onSnapshot(settingsRef, (docSnap) => {
       if (docSnap.exists()) {
@@ -128,7 +161,6 @@ export default function App() {
       }
     });
 
-    // Sales Sync
     const salesRef = collection(db, 'artifacts', appId, 'public', 'data', 'sales');
     const unsubSales = onSnapshot(salesRef, (snapshot) => {
       const records = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -141,7 +173,6 @@ export default function App() {
       }
     });
 
-    // User Directory Sync (Admin Only)
     let unsubUsers = () => {};
     if (userProfile.role === 'admin') {
       const usersRef = collection(db, 'artifacts', appId, 'public', 'data', 'users');
@@ -159,6 +190,27 @@ export default function App() {
 
   const handleLogout = () => signOut(auth);
 
+  if (configMissing) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-slate-50 p-6 text-center">
+        <div className="max-w-md bg-white p-8 rounded-3xl shadow-xl border border-red-100">
+          <AlertCircle className="text-red-500 mx-auto mb-4" size={48} />
+          <h1 className="text-2xl font-black text-slate-800 mb-2">Configuration Missing</h1>
+          <p className="text-slate-500 mb-6 font-medium">Firebase credentials are missing or invalid. If you are deploying to Vercel, please ensure environment variables are correctly set.</p>
+          <div className="text-xs text-left bg-slate-50 p-4 rounded-xl font-mono text-slate-400 overflow-x-auto whitespace-pre">
+            Required Variables:<br/>
+            VITE_FIREBASE_API_KEY<br/>
+            VITE_FIREBASE_AUTH_DOMAIN<br/>
+            VITE_FIREBASE_PROJECT_ID<br/>
+            VITE_FIREBASE_STORAGE_BUCKET<br/>
+            VITE_FIREBASE_MESSAGING_SENDER_ID<br/>
+            VITE_FIREBASE_APP_ID
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="flex h-screen items-center justify-center bg-[#F8FAFC]">
@@ -170,15 +222,14 @@ export default function App() {
     );
   }
 
-  if (view === 'login') return <LoginPortal appId={appId} db={db} auth={auth} setView={setView} />;
-  if (view === 'onboarding') return <Onboarding appId={appId} db={db} user={user} setView={setView} setUserProfile={setUserProfile} />;
+  if (view === 'login') return <LoginPortal setView={setView} />;
+  if (view === 'onboarding') return <Onboarding user={user} setView={setView} setUserProfile={setUserProfile} />;
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-slate-900 font-sans pb-20 md:pb-0 md:pl-64">
       <Navigation view={view} setView={setView} role={userProfile?.role} onLogout={handleLogout} />
       
       <main className="p-4 md:p-8 max-w-[1600px] mx-auto">
-        {/* View Routing */}
         {view === 'dashboard' && (
           userProfile?.role === 'admin' ? (
             <Dashboard records={salesRecords} targets={targets} shops={shops} managers={areaManagers} />
@@ -188,7 +239,7 @@ export default function App() {
         )}
         
         {view === 'collection' && (
-          <SalesCollectionForm areaManagers={areaManagers} shops={shops} appId={appId} db={db} user={user} />
+          <SalesCollectionForm areaManagers={areaManagers} shops={shops} user={user} />
         )}
         
         {view === 'reports' && (
@@ -196,7 +247,7 @@ export default function App() {
         )}
         
         {view === 'admin' && userProfile?.role === 'admin' && (
-          <AdminDashboard areaManagers={areaManagers} shops={shops} targets={targets} appId={appId} db={db} user={user} />
+          <AdminDashboard areaManagers={areaManagers} shops={shops} targets={targets} user={user} />
         )}
 
         {view === 'userSearch' && userProfile?.role === 'admin' && (
@@ -211,7 +262,7 @@ export default function App() {
 
 // --- AUTH COMPONENTS ---
 
-function LoginPortal({ appId, db, auth, setView }) {
+function LoginPortal() {
   const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -284,7 +335,7 @@ function LoginPortal({ appId, db, auth, setView }) {
   );
 }
 
-function Onboarding({ appId, db, user, setView, setUserProfile }) {
+function Onboarding({ user, setView, setUserProfile }) {
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -292,9 +343,13 @@ function Onboarding({ appId, db, user, setView, setUserProfile }) {
     if (!name.trim()) return;
     setLoading(true);
     const profile = { username: name, role: 'user', createdAt: Date.now() };
-    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid), profile);
-    setUserProfile(profile);
-    setView('dashboard');
+    try {
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid), profile);
+      setUserProfile(profile);
+      setView('dashboard');
+    } catch (e) {
+      console.error(e);
+    }
     setLoading(false);
   };
 
@@ -322,7 +377,7 @@ function Onboarding({ appId, db, user, setView, setUserProfile }) {
 
 function UserWelcome({ profile, setView }) {
   return (
-    <div className="flex flex-col items-center justify-center py-20 animate-in fade-in zoom-in duration-500">
+    <div className="flex flex-col items-center justify-center py-20">
       <div className="bg-emerald-100 w-24 h-24 rounded-full flex items-center justify-center mb-8 shadow-inner">
         <UserIcon className="text-emerald-600" size={48} />
       </div>
@@ -513,7 +568,7 @@ function KPIBox({ title, value, target, progress, color }) {
   );
 }
 
-function SalesCollectionForm({ areaManagers, shops, appId, db, user }) {
+function SalesCollectionForm({ areaManagers, shops, user }) {
   const [formData, setFormData] = useState({ areaManager: '', shopName: '', gaAch: '', ocAch: '', workingHours: '', note: '' });
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -564,7 +619,7 @@ function SalesCollectionForm({ areaManagers, shops, appId, db, user }) {
             <input required type="number" className="w-full border-2 border-emerald-50 p-8 rounded-[2rem] font-black text-4xl text-emerald-600 outline-none" value={formData.gaAch} onChange={e => setFormData({...formData, gaAch: e.target.value})} />
           </div>
           <div className="space-y-2">
-            <label className="text-[10px] font-black uppercase text-blue-500">OC Achievement</label>
+            <label className="text-[10px) font-black uppercase text-blue-500">OC Achievement</label>
             <input required type="number" className="w-full border-2 border-blue-50 p-8 rounded-[2rem] font-black text-4xl text-blue-600 outline-none" value={formData.ocAch} onChange={e => setFormData({...formData, ocAch: e.target.value})} />
           </div>
         </div>
@@ -624,7 +679,7 @@ function SalesList({ records, targets, shops, managers, role }) {
               <th className="px-6 py-5 text-[10px] font-black uppercase">Date</th>
               <th className="px-6 py-5 text-[10px] font-black uppercase">Location</th>
               <th className="px-4 py-5 text-[10px] font-black uppercase text-right bg-emerald-900/10">GA Target</th>
-              <th className="px-4 py-5 text-[10px] font-black uppercase text-right bg-emerald-900/10 text-emerald-400">GA Ach</th>
+              <th className="px-4 py-5 text-[10px) font-black uppercase text-right bg-emerald-900/10 text-emerald-400">GA Ach</th>
               <th className="px-4 py-5 text-[10px] font-black uppercase text-right bg-emerald-900/10">GA %</th>
               <th className="px-4 py-5 text-[10px] font-black uppercase text-right bg-emerald-900/10">GA Rem.</th>
               <th className="px-4 py-5 text-[10px] font-black uppercase text-right bg-blue-900/10">OC Target</th>
@@ -702,7 +757,7 @@ function UserSearch({ users }) {
   );
 }
 
-function AdminDashboard({ areaManagers, shops, targets, appId, db, user }) {
+function AdminDashboard({ areaManagers, shops, targets, user }) {
   const [newManager, setNewManager] = useState('');
   const [newShop, setNewShop] = useState('');
   const [assignManager, setAssignManager] = useState('');
