@@ -47,6 +47,7 @@ import {
 } from 'lucide-react';
 
 // --- Firebase Configuration ---
+// Verified with pyramids-sales credentials
 const firebaseConfig = {
   apiKey: "AIzaSyAYb6zn5YulU9Ght-3T2vHFzdbOL94GYqs",
   authDomain: "pyramids-sales.firebaseapp.com",
@@ -131,7 +132,7 @@ export default function App() {
       } catch (e) {
         // Detailed logging for debugging permission issues
         console.error("Error fetching user profile:", e);
-        // If it's a permission error, we might still be in a state transition
+        // Sometimes permissions fail if the token is not fully recognized by Firestore yet
       } finally {
         setLoading(false);
       }
