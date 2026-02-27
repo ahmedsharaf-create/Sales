@@ -43,7 +43,11 @@ import {
   User as UserIcon,
   Search,
   Lock,
-  Mail
+  Mail,
+  ShieldCheck,
+  UserCog,
+  Save,
+  X
 } from 'lucide-react';
 
 // --- Firebase Configuration ---
@@ -114,8 +118,6 @@ export default function App() {
       } catch (e) {
         console.error("Critical Profile Fetch Error:", e);
         setError("Permission denied or database error. Please check your Firestore Rules.");
-        // Even if fetch fails, we don't want to stay stuck in loading forever
-        // but we stay on a safe view or show the error
       } finally {
         setLoading(false);
       }
@@ -220,7 +222,7 @@ export default function App() {
         {view === 'collection' && <SalesCollectionForm areaManagers={areaManagers} shops={shops} user={user} />}
         {view === 'reports' && <SalesList records={salesRecords} targets={targets} shops={shops} managers={areaManagers} role={userProfile?.role} />}
         {view === 'admin' && userProfile?.role === 'admin' && <AdminDashboard areaManagers={areaManagers} shops={shops} targets={targets} user={user} />}
-        {view === 'userSearch' && userProfile?.role === 'admin' && <UserSearch users={allUsers} />}
+        {view === 'userSearch' && userProfile?.role === 'admin' && <UserSearch users={allUsers} db={db} appId={appId} />}
       </main>
 
       <MobileNav view={view} setView={setView} role={userProfile?.role} />
@@ -481,6 +483,7 @@ function SalesCollectionForm({ areaManagers, shops, user }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!user) return;
     setSubmitting(true);
     try {
       await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'sales'), { ...formData, gaAch: Number(formData.gaAch) || 0, ocAch: Number(formData.ocAch) || 0, timestamp: Date.now(), submittedBy: user.uid });
@@ -545,14 +548,120 @@ function SalesList({ records, targets, shops, managers, role }) {
   );
 }
 
-function UserSearch({ users }) {
+function UserSearch({ users, db, appId }) {
   const [searchTerm, setSearchTerm] = useState('');
+  const [editingId, setEditingId] = useState(null);
+  const [editForm, setEditForm] = useState({ username: '', role: 'user' });
+  const [updating, setUpdating] = useState(false);
+
   const filtered = users.filter(u => u.username?.toLowerCase().includes(searchTerm.toLowerCase()));
+
+  const startEdit = (u) => {
+    setEditingId(u.uid);
+    setEditForm({ username: u.username || '', role: u.role || 'user' });
+  };
+
+  const handleUpdate = async (uid) => {
+    setUpdating(true);
+    try {
+      const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', uid);
+      await updateDoc(userDocRef, {
+        username: editForm.username,
+        role: editForm.role
+      });
+      setEditingId(null);
+    } catch (err) {
+      console.error("Error updating user:", err);
+    }
+    setUpdating(false);
+  };
+
   return (
-    <div className="space-y-6">
-      <h2 className="text-4xl font-black text-slate-800 tracking-tighter">Directory</h2>
-      <div className="relative max-w-xl"><Search className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300" /><input type="text" placeholder="Search..." className="w-full bg-white border border-slate-200 p-6 pl-14 rounded-[2rem] font-bold shadow-sm outline-none focus:ring-4" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} /></div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">{filtered.map(u => (<div key={u.uid} className="bg-white p-6 rounded-[2rem] border border-slate-200 flex items-center gap-4 hover:shadow-xl"><div className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center font-black text-slate-400 text-xl uppercase">{u.username?.charAt(0)}</div><div><p className="font-black text-slate-800">{u.username}</p><span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${u.role === 'admin' ? 'bg-purple-100 text-purple-600' : 'bg-slate-100 text-slate-400'}`}>{u.role}</span></div></div>))}</div>
+    <div className="space-y-6 animate-in fade-in duration-500">
+      <header>
+        <h2 className="text-4xl font-black text-slate-800 tracking-tighter">Team Directory</h2>
+        <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mt-1">Manage signed-up staff roles and display names</p>
+      </header>
+
+      <div className="relative max-w-xl">
+        <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300" />
+        <input 
+          type="text" 
+          placeholder="Search team members..." 
+          className="w-full bg-white border border-slate-200 p-6 pl-14 rounded-[2rem] font-bold shadow-sm outline-none focus:ring-4 focus:ring-emerald-500/10 transition-all" 
+          value={searchTerm} 
+          onChange={e => setSearchTerm(e.target.value)} 
+        />
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+        {filtered.map(u => (
+          <div key={u.uid} className={`bg-white p-6 rounded-[2.5rem] border transition-all shadow-sm flex flex-col gap-4 ${editingId === u.uid ? 'border-emerald-500 ring-4 ring-emerald-500/5' : 'border-slate-200'}`}>
+            <div className="flex items-center gap-4">
+              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center font-black text-xl uppercase ${u.role === 'admin' ? 'bg-purple-100 text-purple-600' : 'bg-slate-50 text-slate-400'}`}>
+                {u.username?.charAt(0)}
+              </div>
+              <div className="flex-1">
+                {editingId === u.uid ? (
+                  <input 
+                    className="w-full border-b-2 border-emerald-500 font-black text-slate-800 outline-none text-lg"
+                    value={editForm.username}
+                    onChange={e => setEditForm({...editForm, username: e.target.value})}
+                    autoFocus
+                  />
+                ) : (
+                  <p className="font-black text-slate-800 text-lg">{u.username}</p>
+                )}
+                <div className="flex items-center gap-2 mt-1">
+                  {u.role === 'admin' ? <ShieldCheck size={12} className="text-purple-500" /> : <UserIcon size={12} className="text-slate-400" />}
+                  <span className={`text-[10px] font-black uppercase tracking-tighter ${u.role === 'admin' ? 'text-purple-600' : 'text-slate-400'}`}>
+                    {u.role}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 pt-4 border-t border-slate-50">
+              {editingId === u.uid ? (
+                <>
+                  <select 
+                    className="flex-1 bg-slate-50 border-none p-2 rounded-xl text-xs font-bold text-slate-600 outline-none"
+                    value={editForm.role}
+                    onChange={e => setEditForm({...editForm, role: e.target.value})}
+                  >
+                    <option value="user">USER Role</option>
+                    <option value="admin">ADMIN Role</option>
+                  </select>
+                  <button 
+                    disabled={updating}
+                    onClick={() => handleUpdate(u.uid)} 
+                    className="bg-emerald-600 text-white p-2 rounded-xl hover:bg-emerald-700 transition-colors"
+                  >
+                    {updating ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
+                  </button>
+                  <button 
+                    onClick={() => setEditingId(null)} 
+                    className="bg-slate-100 text-slate-400 p-2 rounded-xl hover:bg-slate-200"
+                  >
+                    <X size={18} />
+                  </button>
+                </>
+              ) : (
+                <button 
+                  onClick={() => startEdit(u)} 
+                  className="w-full flex items-center justify-center gap-2 bg-slate-50 text-slate-600 py-3 rounded-2xl font-black text-xs hover:bg-slate-100 transition-all uppercase tracking-widest"
+                >
+                  <UserCog size={16} /> Manage User
+                </button>
+              )}
+            </div>
+            
+            <div className="mt-2 text-[9px] text-slate-300 font-mono break-all text-center">
+              ID: {u.uid}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
