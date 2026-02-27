@@ -9,7 +9,8 @@ import {
   doc, 
   setDoc,
   getDoc,
-  updateDoc
+  updateDoc,
+  deleteDoc
 } from 'firebase/firestore';
 import { 
   getAuth, 
@@ -49,7 +50,9 @@ import {
   Save,
   X,
   Edit3,
-  Check
+  Check,
+  UserPlus,
+  Plus
 } from 'lucide-react';
 
 // --- Firebase Configuration ---
@@ -220,7 +223,7 @@ export default function App() {
         {view === 'collection' && <SalesCollectionForm areaManagers={areaManagers} shops={shops} user={user} />}
         {view === 'reports' && <SalesList records={salesRecords} targets={targets} shops={shops} managers={areaManagers} role={userProfile?.role} />}
         {view === 'targets' && userProfile?.role === 'admin' && <TargetSetting shops={shops} areaManagers={areaManagers} targets={targets} db={db} appId={appId} />}
-        {view === 'admin' && userProfile?.role === 'admin' && <AdminDashboard areaManagers={areaManagers} shops={shops} targets={targets} user={user} />}
+        {view === 'admin' && userProfile?.role === 'admin' && <AdminDashboard areaManagers={areaManagers} shops={shops} targets={targets} db={db} appId={appId} />}
         {view === 'userSearch' && userProfile?.role === 'admin' && <UserSearch users={allUsers} db={db} appId={appId} />}
       </main>
 
@@ -378,7 +381,7 @@ function Navigation({ view, setView, role, onLogout }) {
   return (
     <nav className="hidden md:flex flex-col fixed left-0 top-0 bottom-0 w-64 bg-[#0F172A] text-slate-300 p-6 z-40">
       <div className="mb-10 flex items-center gap-3 px-2">
-        <div className="bg-emerald-500 p-2 rounded-lg shadow-lg"><Store className="text-white" size={18} /></div>
+        <div className="bg-emerald-500 p-2 rounded-lg shadow-lg"><Store className="text-white" size={20} /></div>
         <h1 className="text-lg font-bold text-white uppercase tracking-wider">Pyramids</h1>
       </div>
       <div className="space-y-1 flex-1">
@@ -851,20 +854,177 @@ function UserSearch({ users, db, appId }) {
   );
 }
 
-function AdminDashboard({ areaManagers, shops, targets, user }) {
+function AdminDashboard({ areaManagers, shops, targets, db, appId }) {
   const [newManager, setNewManager] = useState('');
   const [newShop, setNewShop] = useState('');
-  const [assignManager, setAssignManager] = useState('');
-  const [seeding, setSeeding] = useState(false);
-  const updateConfig = async (m, s, t) => { await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config'), { areaManagers: m || areaManagers, shops: s || shops, targets: t || targets }); };
-  const seedTestData = async () => { setSeeding(true); const testManagers = ["Sarah Thompson", "David Miller"]; const testShops = [{ name: "Pyramid View", manager: "Sarah Thompson" }]; const testTargets = { "Pyramid View": { ga: 25000, oc: 15000 } }; await updateConfig(testManagers, testShops, testTargets); setSeeding(false); };
-  
+  const [editingManager, setEditingManager] = useState(null);
+  const [editingShop, setEditingShop] = useState(null);
+  const [editValue, setEditValue] = useState('');
+
+  const updateConfig = async (m, s) => {
+    try {
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config'), { 
+        areaManagers: m || areaManagers, 
+        shops: s || shops, 
+        targets: targets 
+      });
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const deleteManager = (name) => {
+    const updatedM = areaManagers.filter(m => m !== name);
+    // When deleting manager, we keep the shops but they will be unassigned in logic if needed, 
+    // or we delete them. Let's filter shops too for a clean state.
+    const updatedS = shops.filter(s => s.manager !== name);
+    updateConfig(updatedM, updatedS);
+  };
+
+  const deleteShop = (name) => {
+    const updatedS = shops.filter(s => s.name !== name);
+    updateConfig(null, updatedS);
+  };
+
+  const startEditManager = (m) => {
+    setEditingManager(m);
+    setEditValue(m);
+  };
+
+  const saveEditManager = (oldName) => {
+    const updatedM = areaManagers.map(m => m === oldName ? editValue : m);
+    const updatedS = shops.map(s => s.manager === oldName ? { ...s, manager: editValue } : s);
+    updateConfig(updatedM, updatedS);
+    setEditingManager(null);
+  };
+
+  const startEditShop = (s) => {
+    setEditingShop(s.name);
+    setEditValue(s.name);
+  };
+
+  const saveEditShop = (oldName) => {
+    const updatedS = shops.map(s => s.name === oldName ? { ...s, name: editValue } : s);
+    // Update target key too
+    const newTargets = { ...targets };
+    if (newTargets[oldName]) {
+      newTargets[editValue] = newTargets[oldName];
+      delete newTargets[oldName];
+    }
+    // We update config with new shops and updated targets
+    setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config'), { 
+      areaManagers, 
+      shops: updatedS, 
+      targets: newTargets 
+    });
+    setEditingShop(null);
+  };
+
+  const addShopToManager = (managerName) => {
+    if (!newShop.trim()) return;
+    const updatedS = [...shops, { name: newShop.trim(), manager: managerName }];
+    updateConfig(null, updatedS);
+    setNewShop('');
+  };
+
   return (
-    <div className="space-y-8 pb-10">
-      <header className="flex flex-col sm:flex-row justify-between items-center gap-4"><div><h2 className="text-3xl font-black text-slate-800 tracking-tight">System Controls</h2></div><button onClick={seedTestData} disabled={seeding} className="bg-indigo-600 text-white px-8 py-4 rounded-[2rem] font-black text-sm flex items-center gap-3 shadow-2xl active:scale-95 transition-all">{seeding ? <Loader2 className="animate-spin" /> : <Database />} Sandbox Data</button></header>
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <section className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm"><h3 className="font-black mb-6 flex items-center gap-3 text-slate-700"><UsersIcon size={20}/> Managers</h3><div className="flex gap-2 mb-6"><input value={newManager} onChange={e => setNewManager(e.target.value)} className="flex-1 border p-4 rounded-2xl text-sm font-bold bg-slate-50 outline-none" placeholder="Name" /><button onClick={() => {if(newManager) updateConfig([...areaManagers, newManager], null, null); setNewManager('')}} className="bg-slate-900 text-white px-6 rounded-2xl font-black">Add</button></div><div className="space-y-2">{areaManagers.map((m, i) => <div key={i} className="flex justify-between p-4 bg-slate-50 rounded-2xl font-bold text-slate-600 text-sm">{m}</div>)}</div></section>
-        <section className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm"><h3 className="font-black mb-6 flex items-center gap-3 text-slate-700"><Store size={20}/> Locations</h3><div className="space-y-3"><select value={assignManager} onChange={e => setAssignManager(e.target.value)} className="w-full border p-4 rounded-2xl font-bold bg-slate-50 outline-none text-sm"><option value="">Select Manager</option>{areaManagers.map(m => <option key={m} value={m}>{m}</option>)}</select><div className="flex gap-2"><input value={newShop} onChange={e => setNewShop(e.target.value)} className="flex-1 border p-4 rounded-2xl text-sm font-bold bg-slate-50 outline-none" placeholder="Shop Name" /><button onClick={() => {if(newShop && assignManager) updateConfig(null, [...shops, {name: newShop, manager: assignManager}], null); setNewShop('')}} className="bg-slate-900 text-white px-6 rounded-2xl font-black">Add</button></div></div></section>
+    <div className="space-y-10 pb-20 animate-in fade-in duration-500">
+      <header>
+        <h2 className="text-4xl font-black text-slate-800 tracking-tighter uppercase">Structure Admin</h2>
+        <p className="text-slate-400 font-bold text-xs uppercase tracking-widest mt-1">Manage managers and their assigned shop locations</p>
+      </header>
+
+      {/* Manager Creation */}
+      <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm flex flex-col md:flex-row items-center gap-4">
+        <div className="bg-indigo-50 p-4 rounded-2xl text-indigo-600">
+          <UserPlus size={24} />
+        </div>
+        <input 
+          value={newManager} 
+          onChange={e => setNewManager(e.target.value)}
+          className="flex-1 bg-slate-50 border-none p-5 rounded-2xl font-black text-lg outline-none focus:ring-2 focus:ring-indigo-500/20" 
+          placeholder="Enter New Area Manager Name..." 
+        />
+        <button 
+          onClick={() => { if(newManager.trim()) { updateConfig([...areaManagers, newManager.trim()], null); setNewManager(''); } }}
+          className="bg-indigo-600 text-white px-10 py-5 rounded-2xl font-black text-lg shadow-lg hover:bg-indigo-700 transition-all"
+        >
+          Add Manager
+        </button>
+      </div>
+
+      {/* Detailed Manager/Shop List */}
+      <div className="grid grid-cols-1 gap-8">
+        {areaManagers.map(manager => (
+          <div key={manager} className="bg-white rounded-[3rem] border border-slate-100 shadow-sm overflow-hidden group">
+            <div className="bg-slate-900 p-8 flex justify-between items-center text-white">
+              <div className="flex items-center gap-4">
+                <div className="bg-white/10 p-3 rounded-xl"><UsersIcon size={20} /></div>
+                {editingManager === manager ? (
+                  <div className="flex items-center gap-2">
+                    <input 
+                      value={editValue} 
+                      onChange={e => setEditValue(e.target.value)}
+                      className="bg-white/10 border-b border-white outline-none font-black text-xl"
+                    />
+                    <button onClick={() => saveEditManager(manager)} className="text-emerald-400"><Check size={20} /></button>
+                    <button onClick={() => setEditingManager(null)} className="text-red-400"><X size={20} /></button>
+                  </div>
+                ) : (
+                  <h3 className="text-2xl font-black tracking-tight">{manager}</h3>
+                )}
+              </div>
+              <div className="flex items-center gap-3">
+                <button onClick={() => startEditManager(manager)} className="p-2 hover:bg-white/10 rounded-lg transition-colors"><Edit3 size={18} /></button>
+                <button onClick={() => deleteManager(manager)} className="p-2 hover:bg-red-500/20 text-red-400 rounded-lg transition-colors"><Trash2 size={18} /></button>
+              </div>
+            </div>
+
+            <div className="p-8 space-y-4">
+              <div className="flex items-center justify-between mb-4">
+                <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Assigned Shops</span>
+                <div className="flex gap-2">
+                   <input 
+                    placeholder="New shop name..."
+                    className="bg-slate-50 border-none p-2 rounded-xl text-xs font-bold outline-none"
+                    value={editingShop === null ? newShop : ''}
+                    onChange={e => setNewShop(e.target.value)}
+                   />
+                   <button 
+                    onClick={() => addShopToManager(manager)}
+                    className="bg-slate-900 text-white p-2 rounded-xl"
+                   >
+                    <Plus size={16} />
+                   </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {shops.filter(s => s.manager === manager).map(shop => (
+                  <div key={shop.name} className="flex items-center justify-between p-5 bg-slate-50 rounded-[2rem] border border-slate-100 group/item hover:border-indigo-200 transition-all">
+                    {editingShop === shop.name ? (
+                      <div className="flex items-center gap-2 flex-1">
+                        <input 
+                          value={editValue} 
+                          onChange={e => setEditValue(e.target.value)}
+                          className="w-full bg-white border-b-2 border-indigo-500 font-bold outline-none"
+                        />
+                        <button onClick={() => saveEditManager(shop.name)} className="text-emerald-500"><Check size={16}/></button>
+                      </div>
+                    ) : (
+                      <span className="font-bold text-slate-700">{shop.name}</span>
+                    )}
+                    
+                    <div className="flex items-center gap-2 opacity-0 group-item-hover:opacity-100 transition-opacity">
+                      <button onClick={() => startEditShop(shop)} className="text-slate-400 hover:text-indigo-600"><Edit3 size={14} /></button>
+                      <button onClick={() => deleteShop(shop.name)} className="text-slate-400 hover:text-red-500"><Trash2 size={14} /></button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
