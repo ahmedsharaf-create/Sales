@@ -47,7 +47,9 @@ import {
   ShieldCheck,
   UserCog,
   Save,
-  X
+  X,
+  Edit3,
+  Check
 } from 'lucide-react';
 
 // --- Firebase Configuration ---
@@ -84,7 +86,6 @@ export default function App() {
   useEffect(() => {
     if (!auth) return;
     const unsubscribe = onAuthStateChanged(auth, (u) => {
-      console.log("Auth State Changed:", u ? "User Logged In" : "No User");
       setUser(u);
       if (!u) {
         setUserProfile(null);
@@ -103,16 +104,13 @@ export default function App() {
       setLoading(true);
       setError(null);
       try {
-        console.log("Fetching profile for UID:", user.uid);
         const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid);
         const userDoc = await getDoc(userDocRef);
         
         if (userDoc.exists()) {
-          console.log("Profile Found:", userDoc.data());
           setUserProfile(userDoc.data());
           setView('dashboard');
         } else {
-          console.log("No Profile Found - Redirecting to Onboarding");
           setView('onboarding');
         }
       } catch (e) {
@@ -221,6 +219,7 @@ export default function App() {
         
         {view === 'collection' && <SalesCollectionForm areaManagers={areaManagers} shops={shops} user={user} />}
         {view === 'reports' && <SalesList records={salesRecords} targets={targets} shops={shops} managers={areaManagers} role={userProfile?.role} />}
+        {view === 'targets' && userProfile?.role === 'admin' && <TargetSetting shops={shops} areaManagers={areaManagers} targets={targets} db={db} appId={appId} />}
         {view === 'admin' && userProfile?.role === 'admin' && <AdminDashboard areaManagers={areaManagers} shops={shops} targets={targets} user={user} />}
         {view === 'userSearch' && userProfile?.role === 'admin' && <UserSearch users={allUsers} db={db} appId={appId} />}
       </main>
@@ -316,7 +315,6 @@ function Onboarding({ user, setView, setUserProfile }) {
     const profile = { username: name, role: 'user', createdAt: Date.now() };
     try {
       await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid), profile);
-      console.log("Profile Created Successfully");
       setUserProfile(profile);
       setView('dashboard');
     } catch (e) {
@@ -372,6 +370,7 @@ function Navigation({ view, setView, role, onLogout }) {
     { id: 'dashboard', label: 'Dashboard', icon: BarChart3, roles: ['admin', 'user'] },
     { id: 'collection', label: 'Sales Entry', icon: PlusCircle, roles: ['admin', 'user'] },
     { id: 'reports', label: 'Audit Log', icon: ClipboardList, roles: ['admin', 'user'] },
+    { id: 'targets', label: 'Monthly Targets', icon: Target, roles: ['admin'] },
     { id: 'userSearch', label: 'Team Search', icon: Search, roles: ['admin'] },
     { id: 'admin', label: 'System Admin', icon: Settings, roles: ['admin'] },
   ];
@@ -404,6 +403,7 @@ function MobileNav({ view, setView, role }) {
     { id: 'dashboard', icon: BarChart3, roles: ['admin', 'user'] },
     { id: 'collection', icon: PlusCircle, roles: ['admin', 'user'] },
     { id: 'reports', icon: ClipboardList, roles: ['admin', 'user'] },
+    { id: 'targets', icon: Target, roles: ['admin'] },
     { id: 'userSearch', icon: Search, roles: ['admin'] },
   ];
   return (
@@ -548,6 +548,191 @@ function SalesList({ records, targets, shops, managers, role }) {
   );
 }
 
+function TargetSetting({ shops, areaManagers, targets, db, appId }) {
+  const [filterManager, setFilterManager] = useState('All');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [editingShop, setEditingShop] = useState(null);
+  const [editForm, setEditForm] = useState({ ga: '', oc: '' });
+  const [status, setStatus] = useState(null);
+
+  const filteredShops = useMemo(() => {
+    return shops.filter(s => {
+      const matchManager = filterManager === 'All' || s.manager === filterManager;
+      const matchSearch = s.name.toLowerCase().includes(searchTerm.toLowerCase());
+      return matchManager && matchSearch;
+    });
+  }, [shops, filterManager, searchTerm]);
+
+  const handleEdit = (shop) => {
+    setEditingShop(shop.name);
+    setEditForm({
+      ga: targets[shop.name]?.ga || 0,
+      oc: targets[shop.name]?.oc || 0
+    });
+  };
+
+  const handleSaveManual = async (shopName) => {
+    try {
+      const newTargets = { 
+        ...targets, 
+        [shopName]: { ga: Number(editForm.ga), oc: Number(editForm.oc) } 
+      };
+      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config'), { 
+        targets: newTargets,
+        areaManagers,
+        shops
+      }, { merge: true });
+      setEditingShop(null);
+      setStatus("Target updated successfully!");
+      setTimeout(() => setStatus(null), 3000);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleCSVUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const text = event.target.result;
+        const rows = text.split('\n').map(r => r.split(','));
+        const newTargets = { ...targets };
+        
+        rows.slice(1).forEach(row => {
+          if (row.length >= 3) {
+            const name = row[0].trim().replace(/"/g, '');
+            const ga = parseFloat(row[1]) || 0;
+            const oc = parseFloat(row[2]) || 0;
+            if (shops.some(s => s.name === name)) {
+              newTargets[name] = { ga, oc };
+            }
+          }
+        });
+
+        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config'), { 
+          targets: newTargets,
+          areaManagers,
+          shops
+        }, { merge: true });
+        
+        setStatus("Bulk update completed!");
+        setTimeout(() => setStatus(null), 3000);
+      } catch (err) {
+        setStatus("Error processing CSV.");
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  return (
+    <div className="space-y-8 animate-in fade-in duration-500 pb-20">
+      <header className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
+        <div>
+          <h2 className="text-4xl font-black text-slate-800 tracking-tighter uppercase">Target Control</h2>
+          <p className="text-slate-400 font-bold text-xs uppercase tracking-widest mt-1">Adjust monthly goals and upload bulk data</p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2 bg-white px-4 py-3 rounded-2xl border border-slate-200 shadow-sm text-sm">
+            <Filter size={16} className="text-slate-400" />
+            <select value={filterManager} onChange={e => setFilterManager(e.target.value)} className="bg-transparent focus:outline-none font-bold text-slate-700">
+              <option value="All">All Managers</option>
+              {areaManagers.map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+          </div>
+          <div className="relative bg-emerald-600 text-white px-6 py-3 rounded-2xl font-black text-sm shadow-xl hover:bg-emerald-700 transition-all cursor-pointer">
+            <input type="file" accept=".csv" onChange={handleCSVUpload} className="absolute inset-0 opacity-0 cursor-pointer" title="Upload CSV Template" />
+            <div className="flex items-center gap-2"><Upload size={18} /> Bulk CSV Upload</div>
+          </div>
+        </div>
+      </header>
+
+      {status && (
+        <div className="bg-emerald-50 text-emerald-600 border border-emerald-100 p-4 rounded-2xl font-black text-center animate-bounce">
+          {status}
+        </div>
+      )}
+
+      <div className="relative max-w-xl mb-8">
+        <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300" />
+        <input 
+          type="text" 
+          placeholder="Filter by shop name..." 
+          className="w-full bg-white border border-slate-200 p-6 pl-14 rounded-[2rem] font-bold shadow-sm outline-none focus:ring-4 focus:ring-emerald-500/10 transition-all" 
+          value={searchTerm} 
+          onChange={e => setSearchTerm(e.target.value)} 
+        />
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+        {filteredShops.map(shop => (
+          <div key={shop.name} className={`bg-white p-8 rounded-[2.5rem] border transition-all shadow-sm flex flex-col gap-6 ${editingShop === shop.name ? 'border-emerald-500 ring-4 ring-emerald-500/5' : 'border-slate-100 hover:shadow-xl'}`}>
+            <div className="flex justify-between items-start">
+              <div>
+                <h4 className="font-black text-xl text-slate-800 leading-none mb-2">{shop.name}</h4>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">MGR: {shop.manager}</p>
+              </div>
+              <div className="p-3 bg-slate-50 rounded-2xl text-slate-400 hover:text-emerald-600 transition-colors cursor-pointer" onClick={() => handleEdit(shop)}>
+                <Edit3 size={18} />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-emerald-50/50 p-5 rounded-3xl border border-emerald-50">
+                <p className="text-[9px] font-black text-emerald-600 uppercase mb-2">GA Target</p>
+                {editingShop === shop.name ? (
+                  <input 
+                    type="number" 
+                    className="w-full bg-transparent font-black text-2xl text-emerald-700 outline-none border-b-2 border-emerald-200"
+                    value={editForm.ga}
+                    onChange={e => setEditForm({...editForm, ga: e.target.value})}
+                    autoFocus
+                  />
+                ) : (
+                  <span className="text-2xl font-black text-emerald-700">{targets[shop.name]?.ga?.toLocaleString() || 0}</span>
+                )}
+              </div>
+              <div className="bg-blue-50/50 p-5 rounded-3xl border border-blue-50">
+                <p className="text-[9px] font-black text-blue-600 uppercase mb-2">OC Target</p>
+                {editingShop === shop.name ? (
+                  <input 
+                    type="number" 
+                    className="w-full bg-transparent font-black text-2xl text-blue-700 outline-none border-b-2 border-blue-200"
+                    value={editForm.oc}
+                    onChange={e => setEditForm({...editForm, oc: e.target.value})}
+                  />
+                ) : (
+                  <span className="text-2xl font-black text-blue-700">{targets[shop.name]?.oc?.toLocaleString() || 0}</span>
+                )}
+              </div>
+            </div>
+
+            {editingShop === shop.name && (
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => handleSaveManual(shop.name)}
+                  className="flex-1 bg-emerald-600 text-white py-4 rounded-2xl font-black flex items-center justify-center gap-2 hover:bg-emerald-700 shadow-lg shadow-emerald-600/20"
+                >
+                  <Check size={20} /> Save Changes
+                </button>
+                <button 
+                  onClick={() => setEditingShop(null)}
+                  className="bg-slate-100 text-slate-400 px-6 rounded-2xl font-black hover:bg-slate-200 transition-all"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function UserSearch({ users, db, appId }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [editingId, setEditingId] = useState(null);
@@ -673,14 +858,13 @@ function AdminDashboard({ areaManagers, shops, targets, user }) {
   const [seeding, setSeeding] = useState(false);
   const updateConfig = async (m, s, t) => { await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config'), { areaManagers: m || areaManagers, shops: s || shops, targets: t || targets }); };
   const seedTestData = async () => { setSeeding(true); const testManagers = ["Sarah Thompson", "David Miller"]; const testShops = [{ name: "Pyramid View", manager: "Sarah Thompson" }]; const testTargets = { "Pyramid View": { ga: 25000, oc: 15000 } }; await updateConfig(testManagers, testShops, testTargets); setSeeding(false); };
-  const handleCSV = (e) => { const file = e.target.files[0]; const reader = new FileReader(); reader.onload = (evt) => { const rows = evt.target.result.split('\n').map(r => r.split(',')); const newT = { ...targets }; rows.slice(1).forEach(row => { if (row.length >= 3) { const name = row[0].trim().replace(/"/g, ''); if (shops.some(s => s.name === name)) newT[name] = { ga: parseFloat(row[1]) || 0, oc: parseFloat(row[2]) || 0 }; } }); updateConfig(null, null, newT); }; reader.readAsText(file); };
+  
   return (
     <div className="space-y-8 pb-10">
       <header className="flex flex-col sm:flex-row justify-between items-center gap-4"><div><h2 className="text-3xl font-black text-slate-800 tracking-tight">System Controls</h2></div><button onClick={seedTestData} disabled={seeding} className="bg-indigo-600 text-white px-8 py-4 rounded-[2rem] font-black text-sm flex items-center gap-3 shadow-2xl active:scale-95 transition-all">{seeding ? <Loader2 className="animate-spin" /> : <Database />} Sandbox Data</button></header>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <section className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm"><h3 className="font-black mb-6 flex items-center gap-3 text-slate-700"><UsersIcon size={20}/> Managers</h3><div className="flex gap-2 mb-6"><input value={newManager} onChange={e => setNewManager(e.target.value)} className="flex-1 border p-4 rounded-2xl text-sm font-bold bg-slate-50 outline-none" placeholder="Name" /><button onClick={() => {if(newManager) updateConfig([...areaManagers, newManager], null, null); setNewManager('')}} className="bg-slate-900 text-white px-6 rounded-2xl font-black">Add</button></div><div className="space-y-2">{areaManagers.map((m, i) => <div key={i} className="flex justify-between p-4 bg-slate-50 rounded-2xl font-bold text-slate-600 text-sm">{m}</div>)}</div></section>
         <section className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm"><h3 className="font-black mb-6 flex items-center gap-3 text-slate-700"><Store size={20}/> Locations</h3><div className="space-y-3"><select value={assignManager} onChange={e => setAssignManager(e.target.value)} className="w-full border p-4 rounded-2xl font-bold bg-slate-50 outline-none text-sm"><option value="">Select Manager</option>{areaManagers.map(m => <option key={m} value={m}>{m}</option>)}</select><div className="flex gap-2"><input value={newShop} onChange={e => setNewShop(e.target.value)} className="flex-1 border p-4 rounded-2xl text-sm font-bold bg-slate-50 outline-none" placeholder="Shop Name" /><button onClick={() => {if(newShop && assignManager) updateConfig(null, [...shops, {name: newShop, manager: assignManager}], null); setNewShop('')}} className="bg-slate-900 text-white px-6 rounded-2xl font-black">Add</button></div></div></section>
-        <section className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm flex flex-col"><h3 className="font-black mb-6 flex items-center gap-3 text-slate-700"><FileSpreadsheet size={20}/> CSV Upload</h3><div className="flex-1 border-4 border-dashed border-slate-100 rounded-[2.5rem] p-8 text-center flex flex-col items-center justify-center relative hover:bg-slate-50 cursor-pointer group"><input type="file" accept=".csv" onChange={handleCSV} className="absolute inset-0 opacity-0 cursor-pointer" /><Upload size={48} className="text-slate-200 mb-4" /><p className="font-black text-slate-400 uppercase text-xs">Drop CSV Here</p></div></section>
       </div>
     </div>
   );
