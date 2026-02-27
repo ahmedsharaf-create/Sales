@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
+import { getAnalytics } from 'firebase/analytics';
 import { 
   getFirestore, 
   collection, 
@@ -45,59 +46,42 @@ import {
   Mail
 } from 'lucide-react';
 
-// --- Firebase Configuration Helper ---
-// Using a safer method to access environment variables to avoid 'import.meta' errors in some environments
-const getFirebaseConfig = () => {
-  try {
-    // Check for global window configuration (often used in Canvas/static previews)
-    if (typeof window !== 'undefined' && window.__firebase_config) {
-      return typeof window.__firebase_config === 'string' ? JSON.parse(window.__firebase_config) : window.__firebase_config;
-    }
-    
-    // Fallback for Vite environment (Standard for Vercel/GitHub deployments)
-    // We use a try block and indirect access to prevent build-time errors
-    const viteEnv = (function() {
-      try { return import.meta.env; } catch (e) { return {}; }
-    })();
-
-    if (viteEnv && viteEnv.VITE_FIREBASE_API_KEY) {
-      return {
-        apiKey: viteEnv.VITE_FIREBASE_API_KEY,
-        authDomain: viteEnv.VITE_FIREBASE_AUTH_DOMAIN,
-        projectId: viteEnv.VITE_FIREBASE_PROJECT_ID,
-        storageBucket: viteEnv.VITE_FIREBASE_STORAGE_BUCKET,
-        messagingSenderId: viteEnv.VITE_FIREBASE_MESSAGING_SENDER_ID,
-        appId: viteEnv.VITE_FIREBASE_APP_ID,
-      };
-    }
-  } catch (e) {
-    console.warn("Firebase configuration retrieval failed:", e);
-  }
-  return null;
+// --- Firebase Configuration ---
+// Updated with your specific pyramids-sales credentials
+const firebaseConfig = {
+  apiKey: "AIzaSyAYb6zn5YulU9Ght-3T2vHFzdbOL94GYqs",
+  authDomain: "pyramids-sales.firebaseapp.com",
+  projectId: "pyramids-sales",
+  storageBucket: "pyramids-sales.firebasestorage.app",
+  messagingSenderId: "658795707959",
+  appId: "1:658795707959:web:76e44a85011105fd2949b2",
+  measurementId: "G-MMZ18E15FX"
 };
 
-const firebaseConfig = getFirebaseConfig();
-let app, auth, db;
+// Initialize Firebase services
+let app, auth, db, analytics;
 
-if (firebaseConfig && firebaseConfig.apiKey) {
-  try {
-    app = initializeApp(firebaseConfig);
-    auth = getAuth(app);
-    db = getFirestore(app);
-  } catch (e) {
-    console.error("Firebase init error:", e);
+try {
+  app = initializeApp(firebaseConfig);
+  auth = getAuth(app);
+  db = getFirestore(app);
+  // Analytics is only initialized in environments that support it
+  if (typeof window !== 'undefined') {
+    analytics = getAnalytics(app);
   }
+} catch (e) {
+  console.error("Firebase initialization error:", e);
 }
 
-// Safely get App ID
+// Safely get App ID for Firestore paths
 const getAppId = () => {
   try {
     const viteAppId = (function() {
       try { return import.meta.env.VITE_APP_ID; } catch (e) { return null; }
     })();
-    return viteAppId || (typeof __app_id !== 'undefined' ? __app_id : 'cash-shop-sales-v3');
+    return viteAppId || (typeof __app_id !== 'undefined' ? __app_id : 'pyramids-sales-v1');
   } catch (e) {
-    return 'cash-shop-sales-v3';
+    return 'pyramids-sales-v1';
   }
 };
 
@@ -196,16 +180,7 @@ export default function App() {
         <div className="max-w-md bg-white p-8 rounded-3xl shadow-xl border border-red-100">
           <AlertCircle className="text-red-500 mx-auto mb-4" size={48} />
           <h1 className="text-2xl font-black text-slate-800 mb-2">Configuration Missing</h1>
-          <p className="text-slate-500 mb-6 font-medium">Firebase credentials are missing or invalid. If you are deploying to Vercel, please ensure environment variables are correctly set.</p>
-          <div className="text-xs text-left bg-slate-50 p-4 rounded-xl font-mono text-slate-400 overflow-x-auto whitespace-pre">
-            Required Variables:<br/>
-            VITE_FIREBASE_API_KEY<br/>
-            VITE_FIREBASE_AUTH_DOMAIN<br/>
-            VITE_FIREBASE_PROJECT_ID<br/>
-            VITE_FIREBASE_STORAGE_BUCKET<br/>
-            VITE_FIREBASE_MESSAGING_SENDER_ID<br/>
-            VITE_FIREBASE_APP_ID
-          </div>
+          <p className="text-slate-500 mb-6 font-medium">Firebase credentials are missing or invalid.</p>
         </div>
       </div>
     );
@@ -619,7 +594,7 @@ function SalesCollectionForm({ areaManagers, shops, user }) {
             <input required type="number" className="w-full border-2 border-emerald-50 p-8 rounded-[2rem] font-black text-4xl text-emerald-600 outline-none" value={formData.gaAch} onChange={e => setFormData({...formData, gaAch: e.target.value})} />
           </div>
           <div className="space-y-2">
-            <label className="text-[10px) font-black uppercase text-blue-500">OC Achievement</label>
+            <label className="text-[10px] font-black uppercase text-blue-500">OC Achievement</label>
             <input required type="number" className="w-full border-2 border-blue-50 p-8 rounded-[2rem] font-black text-4xl text-blue-600 outline-none" value={formData.ocAch} onChange={e => setFormData({...formData, ocAch: e.target.value})} />
           </div>
         </div>
@@ -679,7 +654,7 @@ function SalesList({ records, targets, shops, managers, role }) {
               <th className="px-6 py-5 text-[10px] font-black uppercase">Date</th>
               <th className="px-6 py-5 text-[10px] font-black uppercase">Location</th>
               <th className="px-4 py-5 text-[10px] font-black uppercase text-right bg-emerald-900/10">GA Target</th>
-              <th className="px-4 py-5 text-[10px) font-black uppercase text-right bg-emerald-900/10 text-emerald-400">GA Ach</th>
+              <th className="px-4 py-5 text-[10px] font-black uppercase text-right bg-emerald-900/10 text-emerald-400">GA Ach</th>
               <th className="px-4 py-5 text-[10px] font-black uppercase text-right bg-emerald-900/10">GA %</th>
               <th className="px-4 py-5 text-[10px] font-black uppercase text-right bg-emerald-900/10">GA Rem.</th>
               <th className="px-4 py-5 text-[10px] font-black uppercase text-right bg-blue-900/10">OC Target</th>
