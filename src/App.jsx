@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
+import { getAnalytics } from 'firebase/analytics';
 import { 
   getFirestore, 
   collection, 
@@ -53,10 +54,23 @@ import {
 } from 'lucide-react';
 
 // --- Environment Setup ---
-const firebaseConfig = JSON.parse(__firebase_config);
+const firebaseConfig = {
+  apiKey: "AIzaSyAYb6zn5YulU9Ght-3T2vHFzdbOL94GYqs",
+  authDomain: "pyramids-sales.firebaseapp.com",
+  projectId: "pyramids-sales",
+  storageBucket: "pyramids-sales.firebasestorage.app",
+  messagingSenderId: "658795707959",
+  appId: "1:658795707959:web:76e44a85011105fd2949b2",
+  measurementId: "G-MMZ18E15FX"
+};
+
+// Initialize Firebase services
 const app = initializeApp(firebaseConfig);
+const analytics = typeof window !== 'undefined' ? getAnalytics(app) : null;
 const auth = getAuth(app);
 const db = getFirestore(app);
+
+// Application ID for Firestore path scoping (Rule 1)
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'pyramids-sales-v1';
 
 // --- Custom SVG Chart Components ---
