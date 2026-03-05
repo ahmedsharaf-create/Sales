@@ -55,13 +55,13 @@ import {
 
 // --- Environment Setup ---
 const firebaseConfig = {
-  apiKey: "AIzaSyBGP3RALA1Ym_Bot5L-EhaeJtesdPUuA08",
+  apiKey: "AIzaSyAYb6zn5YulU9Ght-3T2vHFzdbOL94GYqs",
   authDomain: "pyramids-sales.firebaseapp.com",
   projectId: "pyramids-sales",
   storageBucket: "pyramids-sales.firebasestorage.app",
   messagingSenderId: "658795707959",
-  appId: "1:658795707959:web:b85bf34d4f86f5d72949b2",
-  measurementId: "G-EXKR6PYZHS"
+  appId: "1:658795707959:web:76e44a85011105fd2949b2",
+  measurementId: "G-MMZ18E15FX"
 };
 
 // Initialize Firebase services
