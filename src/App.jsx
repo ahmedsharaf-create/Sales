@@ -9,7 +9,8 @@ import {
   setDoc,
   getDoc,
   updateDoc,
-  deleteDoc
+  deleteDoc,
+  query
 } from 'firebase/firestore';
 import { 
   getAuth, 
@@ -17,7 +18,9 @@ import {
   createUserWithEmailAndPassword,
   sendPasswordResetEmail,
   onAuthStateChanged,
-  signOut
+  signOut,
+  signInWithCustomToken,
+  signInAnonymously
 } from 'firebase/auth';
 import { 
   PlusCircle, 
@@ -62,22 +65,25 @@ import {
   ChevronDown
 } from 'lucide-react';
 
-// --- Firebase Configuration ---
-const firebaseConfig = {
-  apiKey: "AIzaSyAYb6zn5YulU9Ght-3T2vHFzdbOL94GYqs",
-  authDomain: "pyramids-sales.firebaseapp.com",
-  projectId: "pyramids-sales",
-  storageBucket: "pyramids-sales.firebasestorage.app",
-  messagingSenderId: "658795707959",
-  appId: "1:658795707959:web:76e44a85011105fd2949b2",
-  measurementId: "G-MMZ18E15FX"
-};
+// --- Global Configuration from Environment ---
+const firebaseConfig = typeof __firebase_config !== 'undefined' 
+  ? JSON.parse(__firebase_config) 
+  : {
+      apiKey: "AIzaSyAYb6zn5YulU9Ght-3T2vHFdbOL94GYqs",
+      authDomain: "pyramids-sales.firebaseapp.com",
+      projectId: "pyramids-sales",
+      storageBucket: "pyramids-sales.firebasestorage.app",
+      messagingSenderId: "658795707959",
+      appId: "1:658795707959:web:76e44a85011105fd2949b2",
+      measurementId: "G-MMZ18E15FX"
+    };
 
-// Initialize Firebase
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'pyramids-sales-v1';
+
+// Initialize Firebase services outside component
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = 'pyramids-sales-v1';
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -92,7 +98,19 @@ export default function App() {
   const [salesRecords, setSalesRecords] = useState([]);
   const [allUsers, setAllUsers] = useState([]);
 
+  // (1) Handle Authentication Workflow
   useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        }
+      } catch (err) {
+        console.error("Authentication failed:", err);
+      }
+    };
+    initAuth();
+
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       setUser(u);
       if (!u) {
@@ -104,6 +122,7 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
+  // (2) Fetch User Profile & Access Control
   useEffect(() => {
     if (!user) return;
     const fetchProfile = async () => {
@@ -114,9 +133,9 @@ export default function App() {
         if (userDoc.exists()) {
           const data = userDoc.data();
           setUserProfile(data);
-          // Check if the user is authorized to enter the system
-          // New users wait until an admin assigns them a manager or role
-          if (data.role !== 'admin' && !data.assignedManager) {
+          
+          // Access Logic: Only allow 'user' or 'admin'. Redirect 'pending' to waiting room.
+          if (data.role === 'pending') {
             setView('waiting');
           } else {
             setView('dashboard');
@@ -125,6 +144,7 @@ export default function App() {
           setView('onboarding');
         }
       } catch (e) {
+        console.error("Profile fetch error:", e);
         setError("Database permission error.");
       } finally {
         setLoading(false);
@@ -133,9 +153,11 @@ export default function App() {
     fetchProfile();
   }, [user]);
 
+  // (3) Set up Firestore Listeners (Guarded by User & Auth)
   useEffect(() => {
-    if (!user || !userProfile) return;
+    if (!user || !userProfile || userProfile.role === 'pending') return;
 
+    // Settings Listener
     const settingsRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config');
     const unsubSettings = onSnapshot(settingsRef, (docSnap) => {
       if (docSnap.exists()) {
@@ -144,24 +166,31 @@ export default function App() {
         setShops(data.shops || []);
         setTargets(data.targets || {});
       }
-    });
+    }, (err) => console.error("Settings listener error:", err));
 
+    // Sales Listener
     const salesRef = collection(db, 'artifacts', appId, 'public', 'data', 'sales');
     const unsubSales = onSnapshot(salesRef, (snapshot) => {
       const records = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
       const sorted = records.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
       if (userProfile.role === 'admin') setSalesRecords(sorted);
       else setSalesRecords(sorted.filter(r => r.submittedBy === user.uid));
-    });
+    }, (err) => console.error("Sales listener error:", err));
 
+    // Users Listener (Admin Only)
+    let unsubUsers = () => {};
     if (userProfile.role === 'admin') {
       const usersRef = collection(db, 'artifacts', appId, 'public', 'data', 'users');
-      onSnapshot(usersRef, (snapshot) => {
+      unsubUsers = onSnapshot(usersRef, (snapshot) => {
         setAllUsers(snapshot.docs.map(d => ({ uid: d.id, ...d.data() })));
-      });
+      }, (err) => console.error("Users listener error:", err));
     }
 
-    return () => { unsubSettings(); unsubSales(); };
+    return () => { 
+      unsubSettings(); 
+      unsubSales(); 
+      unsubUsers();
+    };
   }, [user, userProfile]);
 
   const handleLogout = async () => {
@@ -462,7 +491,7 @@ function SalesCollectionForm({ areaManagers, shops, user, db, appId, userProfile
   const availableShops = useMemo(() => { const mgr = isAdmin ? formData.areaManager : assigned; return mgr ? shops.filter(s => s.manager === mgr) : []; }, [formData.areaManager, shops, isAdmin, assigned]);
 
   const handleSubmit = async (e) => {
-    e.preventDefault(); setSubmitting(true);
+    e.preventDefault(); setSubmitting(false);
     try { 
       await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'sales'), { 
         ...formData, 
@@ -476,8 +505,7 @@ function SalesCollectionForm({ areaManagers, shops, user, db, appId, userProfile
       setSuccess(true); 
       setFormData({ areaManager: isAdmin ? '' : assigned, shopName: '', gaAch: '', ocAch: '', workingHours: '', note: '', date: new Date().toISOString().split('T')[0] }); 
       setTimeout(() => setSuccess(false), 3000); 
-    } catch (err) { console.error(err); } 
-    setSubmitting(false);
+    } catch (err) { console.error("Submit error:", err); } 
   };
 
   return (
@@ -617,7 +645,7 @@ function TargetSetting({ shops, areaManagers, targets, db, appId }) {
 // --- TEAM ---
 function UserSearch({ users, db, appId, managers }) {
   const [editingId, setEditingId] = useState(null);
-  const [editForm, setEditForm] = useState({ username: '', role: 'user', assignedManager: '' });
+  const [editForm, setEditForm] = useState({ username: '', role: 'pending', assignedManager: '' });
   const handleUpdate = async (uid) => { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', uid), editForm); setEditingId(null); };
   
   const handleDeleteUser = async (uid) => {
@@ -636,7 +664,12 @@ function UserSearch({ users, db, appId, managers }) {
               <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center font-black text-slate-300 uppercase">{u.username?.charAt(0)}</div>
               <div>
                 <p className="font-black text-slate-800 text-lg">{u.username}</p>
-                <span className="text-[10px] font-black uppercase tracking-widest text-red-600">{u.assignedManager || 'No Region'}</span>
+                <div className="flex items-center gap-2">
+                   <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${u.role === 'pending' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>
+                     {u.role}
+                   </span>
+                   <span className="text-[10px] font-black uppercase tracking-widest text-red-600">{u.assignedManager || 'Unassigned'}</span>
+                </div>
               </div>
             </div>
             
@@ -644,15 +677,24 @@ function UserSearch({ users, db, appId, managers }) {
 
             {editingId === u.uid ? (
               <div className="space-y-3">
-                <select className="w-full bg-slate-50 p-3 rounded-xl text-xs font-bold outline-none" value={editForm.role} onChange={e => setEditForm({...editForm, role: e.target.value})}><option value="user">USER</option><option value="admin">ADMIN</option></select>
-                <select className="w-full bg-slate-50 p-3 rounded-xl text-xs font-bold outline-none" value={editForm.assignedManager} onChange={e => setEditForm({...editForm, assignedManager: e.target.value})}><option value="">Assign Manager</option>{managers.map(m => <option key={m} value={m}>{m}</option>)}</select>
+                <select className="w-full bg-slate-50 p-3 rounded-xl text-xs font-bold outline-none" value={editForm.role} onChange={e => setEditForm({...editForm, role: e.target.value})}>
+                  <option value="pending">PENDING (WAITING ROOM)</option>
+                  <option value="user">USER (ACTIVE)</option>
+                  <option value="admin">ADMIN (ACTIVE)</option>
+                </select>
+                <select className="w-full bg-slate-50 p-3 rounded-xl text-xs font-bold outline-none" value={editForm.assignedManager} onChange={e => setEditForm({...editForm, assignedManager: e.target.value})}>
+                  <option value="">Assign Manager</option>
+                  {managers.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
                 <div className="flex gap-2">
-                  <button onClick={() => handleUpdate(u.uid)} className="flex-1 bg-slate-900 text-white p-3 rounded-xl font-black">Save</button>
+                  <button onClick={() => handleUpdate(u.uid)} className="flex-1 bg-slate-900 text-white p-3 rounded-xl font-black">Assign Role</button>
                   <button onClick={() => setEditingId(null)} className="p-3 bg-slate-100 rounded-xl"><X size={18}/></button>
                 </div>
               </div>
             ) : ( 
-              <button onClick={() => { setEditingId(u.uid); setEditForm({ username: u.username, role: u.role, assignedManager: u.assignedManager || '' }); }} className="w-full bg-slate-50 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-100 transition-all">Modify Profile</button> 
+              <button onClick={() => { setEditingId(u.uid); setEditForm({ username: u.username, role: u.role, assignedManager: u.assignedManager || '' }); }} className="w-full bg-slate-50 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-100 transition-all">
+                {u.role === 'pending' ? 'Activate Account' : 'Edit Permissions'}
+              </button> 
             )}
           </div>
         ))}
@@ -727,10 +769,10 @@ function Onboarding({ user, setView, setUserProfile }) {
   const [name, setName] = useState(''); 
   const handleSave = async () => { 
     if (!name.trim()) return; 
-    const profile = { username: name, role: 'user', assignedManager: '', createdAt: Date.now() }; 
+    // Setting initial role to 'pending'
+    const profile = { username: name, role: 'pending', assignedManager: '', createdAt: Date.now() }; 
     await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid), profile); 
     setUserProfile(profile); 
-    // Instead of dashboard, send to waiting room
     setView('waiting'); 
   };
   return ( <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC] p-4"><div className="w-full max-w-md bg-white rounded-[3rem] p-10 shadow-xl text-center"><h2 className="text-2xl font-black text-slate-800 mb-8 italic">Profile Setup</h2><input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Full Name" className="w-full bg-slate-50 p-5 rounded-2xl font-bold mb-6 text-center text-xl outline-none" /><button onClick={handleSave} className="w-full bg-red-600 text-white py-5 rounded-2xl font-black text-lg">Continue</button></div></div> );
