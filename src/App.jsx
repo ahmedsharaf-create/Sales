@@ -69,7 +69,7 @@ import {
 const firebaseConfig = typeof __firebase_config !== 'undefined' 
   ? JSON.parse(__firebase_config) 
   : {
-      apiKey: "AIzaSyAYb6zn5YulU9Ght-3T2vHFdbOL94GYqs",
+      apiKey: "AIzaSyAYb6zn5YulU9Ght-3T2vHFzdbOL94GYqs",
       authDomain: "pyramids-sales.firebaseapp.com",
       projectId: "pyramids-sales",
       storageBucket: "pyramids-sales.firebasestorage.app",
@@ -104,6 +104,9 @@ export default function App() {
       try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
           await signInWithCustomToken(auth, __initial_auth_token);
+        } else if (!auth.currentUser) {
+          // For this specific app, we primarily use Email/Password, 
+          // but we follow the await protocol.
         }
       } catch (err) {
         console.error("Authentication failed:", err);
@@ -122,7 +125,7 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // (2) Fetch User Profile & Access Control
+  // (2) Fetch User Profile
   useEffect(() => {
     if (!user) return;
     const fetchProfile = async () => {
@@ -133,9 +136,7 @@ export default function App() {
         if (userDoc.exists()) {
           const data = userDoc.data();
           setUserProfile(data);
-          
-          // Access Logic: Only allow 'user' or 'admin'. Redirect 'pending' to waiting room.
-          if (data.role === 'pending') {
+          if (data.role !== 'admin' && !data.assignedManager) {
             setView('waiting');
           } else {
             setView('dashboard');
@@ -155,7 +156,7 @@ export default function App() {
 
   // (3) Set up Firestore Listeners (Guarded by User & Auth)
   useEffect(() => {
-    if (!user || !userProfile || userProfile.role === 'pending') return;
+    if (!user || !userProfile) return;
 
     // Settings Listener
     const settingsRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config');
@@ -491,7 +492,7 @@ function SalesCollectionForm({ areaManagers, shops, user, db, appId, userProfile
   const availableShops = useMemo(() => { const mgr = isAdmin ? formData.areaManager : assigned; return mgr ? shops.filter(s => s.manager === mgr) : []; }, [formData.areaManager, shops, isAdmin, assigned]);
 
   const handleSubmit = async (e) => {
-    e.preventDefault(); setSubmitting(false);
+    e.preventDefault(); setSubmitting(true);
     try { 
       await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'sales'), { 
         ...formData, 
@@ -506,6 +507,7 @@ function SalesCollectionForm({ areaManagers, shops, user, db, appId, userProfile
       setFormData({ areaManager: isAdmin ? '' : assigned, shopName: '', gaAch: '', ocAch: '', workingHours: '', note: '', date: new Date().toISOString().split('T')[0] }); 
       setTimeout(() => setSuccess(false), 3000); 
     } catch (err) { console.error("Submit error:", err); } 
+    setSubmitting(false);
   };
 
   return (
@@ -645,7 +647,7 @@ function TargetSetting({ shops, areaManagers, targets, db, appId }) {
 // --- TEAM ---
 function UserSearch({ users, db, appId, managers }) {
   const [editingId, setEditingId] = useState(null);
-  const [editForm, setEditForm] = useState({ username: '', role: 'pending', assignedManager: '' });
+  const [editForm, setEditForm] = useState({ username: '', role: 'user', assignedManager: '' });
   const handleUpdate = async (uid) => { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', uid), editForm); setEditingId(null); };
   
   const handleDeleteUser = async (uid) => {
@@ -664,12 +666,7 @@ function UserSearch({ users, db, appId, managers }) {
               <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center font-black text-slate-300 uppercase">{u.username?.charAt(0)}</div>
               <div>
                 <p className="font-black text-slate-800 text-lg">{u.username}</p>
-                <div className="flex items-center gap-2">
-                   <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${u.role === 'pending' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}`}>
-                     {u.role}
-                   </span>
-                   <span className="text-[10px] font-black uppercase tracking-widest text-red-600">{u.assignedManager || 'Unassigned'}</span>
-                </div>
+                <span className="text-[10px] font-black uppercase tracking-widest text-red-600">{u.assignedManager || 'No Region'}</span>
               </div>
             </div>
             
@@ -677,24 +674,15 @@ function UserSearch({ users, db, appId, managers }) {
 
             {editingId === u.uid ? (
               <div className="space-y-3">
-                <select className="w-full bg-slate-50 p-3 rounded-xl text-xs font-bold outline-none" value={editForm.role} onChange={e => setEditForm({...editForm, role: e.target.value})}>
-                  <option value="pending">PENDING (WAITING ROOM)</option>
-                  <option value="user">USER (ACTIVE)</option>
-                  <option value="admin">ADMIN (ACTIVE)</option>
-                </select>
-                <select className="w-full bg-slate-50 p-3 rounded-xl text-xs font-bold outline-none" value={editForm.assignedManager} onChange={e => setEditForm({...editForm, assignedManager: e.target.value})}>
-                  <option value="">Assign Manager</option>
-                  {managers.map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
+                <select className="w-full bg-slate-50 p-3 rounded-xl text-xs font-bold outline-none" value={editForm.role} onChange={e => setEditForm({...editForm, role: e.target.value})}><option value="user">USER</option><option value="admin">ADMIN</option></select>
+                <select className="w-full bg-slate-50 p-3 rounded-xl text-xs font-bold outline-none" value={editForm.assignedManager} onChange={e => setEditForm({...editForm, assignedManager: e.target.value})}><option value="">Assign Manager</option>{managers.map(m => <option key={m} value={m}>{m}</option>)}</select>
                 <div className="flex gap-2">
-                  <button onClick={() => handleUpdate(u.uid)} className="flex-1 bg-slate-900 text-white p-3 rounded-xl font-black">Assign Role</button>
+                  <button onClick={() => handleUpdate(u.uid)} className="flex-1 bg-slate-900 text-white p-3 rounded-xl font-black">Save</button>
                   <button onClick={() => setEditingId(null)} className="p-3 bg-slate-100 rounded-xl"><X size={18}/></button>
                 </div>
               </div>
             ) : ( 
-              <button onClick={() => { setEditingId(u.uid); setEditForm({ username: u.username, role: u.role, assignedManager: u.assignedManager || '' }); }} className="w-full bg-slate-50 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-100 transition-all">
-                {u.role === 'pending' ? 'Activate Account' : 'Edit Permissions'}
-              </button> 
+              <button onClick={() => { setEditingId(u.uid); setEditForm({ username: u.username, role: u.role, assignedManager: u.assignedManager || '' }); }} className="w-full bg-slate-50 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-100 transition-all">Modify Profile</button> 
             )}
           </div>
         ))}
@@ -769,13 +757,12 @@ function Onboarding({ user, setView, setUserProfile }) {
   const [name, setName] = useState(''); 
   const handleSave = async () => { 
     if (!name.trim()) return; 
-    // Setting initial role to 'pending'
-    const profile = { username: name, role: 'pending', assignedManager: '', createdAt: Date.now() }; 
+    const profile = { username: name, role: 'user', assignedManager: '', createdAt: Date.now() }; 
     await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid), profile); 
     setUserProfile(profile); 
     setView('waiting'); 
   };
-  return ( <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC] p-4"><div className="w-full max-w-md bg-white rounded-[3rem] p-10 shadow-xl text-center"><h2 className="text-2xl font-black text-slate-800 mb-8 italic">Profile Setup</h2><input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Full Name" className="w-full bg-slate-50 p-5 rounded-2xl font-bold mb-6 text-center text-xl outline-none" /><button onClick={handleSave} className="w-full bg-red-600 text-white py-5 rounded-2xl font-black text-lg">Continue</button></div></div> );
+  return ( <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC] p-4"><div className="w-full max-md bg-white rounded-[3rem] p-10 shadow-xl text-center"><h2 className="text-2xl font-black text-slate-800 mb-8 italic">Profile Setup</h2><input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Full Name" className="w-full bg-slate-50 p-5 rounded-2xl font-bold mb-6 text-center text-xl outline-none" /><button onClick={handleSave} className="w-full bg-red-600 text-white py-5 rounded-2xl font-black text-lg">Continue</button></div></div> );
 }
 const styleTag = document.createElement('style');
 styleTag.innerHTML = `@media print { .no-print { display: none !important; } body { background: white !important; padding: 0 !important; margin: 0 !important; } main { margin: 0 !important; padding: 0 !important; width: 100% !important; max-width: 100% !important; } .md\\:pl-64 { padding-left: 0 !important; } nav { display: none !important; } .rounded-\\[2\\.5rem\\], .rounded-\\[3rem\\] { border-radius: 0 !important; border: 1px solid #eee !important; } } .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; } .custom-scrollbar::-webkit-scrollbar-thumb { background: #E2E8F0; border-radius: 10px; }`;
