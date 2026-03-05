@@ -28,7 +28,7 @@ import {
   Settings,
   Trash2,
   Loader2,
-  Download,
+  Download, 
   Filter, 
   BarChart3,
   Target,
@@ -78,22 +78,6 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = 'pyramids-sales-v1';
-
-// --- Helper Functions ---
-const parseWorkingHours = (timeStr) => {
-  if (!timeStr || !timeStr.includes('-')) return 0;
-  try {
-    const parts = timeStr.split('-').map(p => p.trim());
-    const start = parts[0].split(':');
-    const end = parts[1].split(':');
-    const startMins = parseInt(start[0]) * 60 + parseInt(start[1] || 0);
-    const endMins = parseInt(end[0]) * 60 + parseInt(end[1] || 0);
-    const diff = (endMins - startMins) / 60;
-    return diff > 0 ? diff : diff + 24; 
-  } catch (e) {
-    return 0;
-  }
-};
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -207,7 +191,6 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
   const [filterManager, setFilterManager] = useState(isAdmin ? 'All' : assignedManager);
   const [selectedManager, setSelectedManager] = useState(null);
   
-  // Table Specific Filters
   const [tableSearch, setTableSearch] = useState('');
   const [performanceFilter, setPerformanceFilter] = useState('All');
 
@@ -237,7 +220,8 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
         summary[r.areaManager].totalGA += (r.gaAch || 0);
         summary[r.areaManager].totalOC += (r.ocAch || 0);
         summary[r.areaManager].entryCount += 1;
-        summary[r.areaManager].totalHours += parseWorkingHours(r.workingHours);
+        // Direct addition of numeric hours
+        summary[r.areaManager].totalHours += parseFloat(r.workingHours || 0);
         if (!summary[r.areaManager].lastActivity || r.timestamp > summary[r.areaManager].lastActivity) {
           summary[r.areaManager].lastActivity = r.timestamp;
         }
@@ -269,7 +253,7 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
       const shopRecords = filteredRecords.filter(r => r.shopName === s.name);
       const totalGA = shopRecords.reduce((acc, r) => acc + (r.gaAch || 0), 0);
       const totalOC = shopRecords.reduce((acc, r) => acc + (r.ocAch || 0), 0);
-      const totalHours = shopRecords.reduce((acc, r) => acc + parseWorkingHours(r.workingHours), 0);
+      const totalHours = shopRecords.reduce((acc, r) => acc + parseFloat(r.workingHours || 0), 0);
       const target = targets[s.name] || { ga: 0, oc: 0 };
       return {
         name: s.name, targetGA: target.ga, totalGA, completionGA: target.ga > 0 ? ((totalGA / target.ga) * 100).toFixed(1) : 0,
@@ -285,11 +269,7 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
     const activeShopNamesToday = [...new Set(records.filter(r => r.date === today).map(r => r.shopName))];
     const totalGA = filteredRecords.reduce((acc, r) => acc + (r.gaAch || 0), 0);
     const totalOC = filteredRecords.reduce((acc, r) => acc + (r.ocAch || 0), 0);
-    return { 
-      totalGA, 
-      totalOC, 
-      closedShopsToday: Math.max(0, shops.length - activeShopNamesToday.length) 
-    };
+    return { totalGA, totalOC, closedShopsToday: Math.max(0, shops.length - activeShopNamesToday.length) };
   }, [records, shops, filteredRecords]);
 
   const exportSummaryExcel = () => {
@@ -307,10 +287,6 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
     document.body.removeChild(link);
   };
 
-  const printSummary = () => {
-    window.print();
-  };
-
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 no-print">
@@ -318,25 +294,11 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
           <div className="p-3 bg-red-600 rounded-2xl shadow-lg shadow-red-200"><LayoutDashboard className="text-white" size={24} /></div>
           <div><h2 className="text-2xl font-black text-slate-800 tracking-tight italic">Performance Hub</h2></div>
         </div>
-        {isAdmin && (
-          <select 
-            value={filterManager} 
-            onChange={e => setFilterManager(e.target.value)} 
-            className="text-xs font-black uppercase tracking-widest p-3 bg-white border border-slate-100 rounded-xl shadow-sm outline-none cursor-pointer"
-          >
-            <option value="All">All Regions</option>
-            {managers.map(m => <option key={m} value={m}>{m}</option>)}
-          </select>
-        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 no-print">
         <div className="lg:col-span-2 bg-white rounded-[2.5rem] shadow-sm border border-slate-100 overflow-hidden">
-          <div className="p-6 border-b border-slate-50 flex justify-between items-center">
-            <h3 className="font-black text-slate-800 text-xs uppercase tracking-widest flex items-center gap-2">
-              <Clock size={16} className="text-red-500" /> Latest Activity
-            </h3>
-          </div>
+          <div className="p-6 border-b border-slate-50 flex justify-between items-center"><h3 className="font-black text-slate-800 text-xs uppercase tracking-widest flex items-center gap-2"><Clock size={16} className="text-red-500" /> Latest Activity</h3></div>
           <table className="w-full text-left">
             <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400"><tr className="tracking-widest"><th className="px-6 py-4">Area Manager</th><th className="px-6 py-4">Last Sales Date & Time</th></tr></thead>
             <tbody className="divide-y divide-slate-50">{managerSummary.map((m, i) => (<tr key={i} className="hover:bg-slate-50 transition-colors"><td className="px-6 py-4 font-black text-slate-700">{m.name}</td><td className="px-6 py-4 font-bold text-slate-400">{m.lastActivity ? `${new Date(m.lastActivity).toLocaleDateString()} ${new Date(m.lastActivity).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : '--'}</td></tr>))}</tbody>
@@ -358,44 +320,25 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
         </div>
       </div>
 
-      {/* Summary Section Header & Filters */}
       <div className="bg-white rounded-[2.5rem] shadow-sm border border-slate-100 overflow-hidden">
         <div className="p-8 border-b border-slate-50 space-y-6">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
             <h3 className="font-black text-slate-800 text-lg tracking-tight">Manager Performance Summary</h3>
             <div className="flex items-center gap-2 no-print">
-              <button 
-                onClick={exportSummaryExcel}
-                className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-600 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-emerald-100 transition-all"
-              >
+              <button onClick={exportSummaryExcel} className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-600 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-emerald-100 transition-all">
                 <FileSpreadsheet size={16} /> Export Excel
               </button>
-              <button 
-                onClick={printSummary}
-                className="flex items-center gap-2 px-4 py-2 bg-slate-50 text-slate-600 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-100 transition-all"
-              >
+              <button onClick={() => window.print()} className="flex items-center gap-2 px-4 py-2 bg-slate-50 text-slate-600 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-100 transition-all">
                 <FileText size={16} /> Save PDF
               </button>
             </div>
           </div>
-          
-          {/* Internal Table Filters */}
           <div className="flex flex-wrap gap-4 no-print border-t pt-6 border-slate-50">
              <div className="relative flex-1 min-w-[200px]">
                 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" />
-                <input 
-                  type="text" 
-                  placeholder="Search manager..." 
-                  className="w-full pl-9 pr-4 py-3 bg-slate-50 border-none rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-red-500/10"
-                  value={tableSearch}
-                  onChange={e => setTableSearch(e.target.value)}
-                />
+                <input type="text" placeholder="Search manager..." className="w-full pl-9 pr-4 py-3 bg-slate-50 border-none rounded-xl text-xs font-bold outline-none" value={tableSearch} onChange={e => setTableSearch(e.target.value)}/>
              </div>
-             <select 
-               className="px-4 py-3 bg-slate-50 border-none rounded-xl text-[10px] font-black uppercase tracking-widest outline-none"
-               value={performanceFilter}
-               onChange={e => setPerformanceFilter(e.target.value)}
-             >
+             <select className="px-4 py-3 bg-slate-50 border-none rounded-xl text-[10px] font-black uppercase tracking-widest outline-none" value={performanceFilter} onChange={e => setPerformanceFilter(e.target.value)}>
                 <option value="All">All Performance</option>
                 <option value="Full">Achieved (100%+)</option>
                 <option value="Good">In Progress (50-99%)</option>
@@ -403,18 +346,13 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
              </select>
           </div>
         </div>
-        
         <div className="overflow-x-auto">
           <table className="w-full text-left">
             <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest">
               <tr><th className="px-8 py-5">Area Manager</th><th className="px-4 py-5 text-center">GA Target</th><th className="px-4 py-5 text-center">GA Ach.</th><th className="px-4 py-5 text-center">%</th><th className="px-4 py-5 text-center">Remaining</th><th className="px-4 py-5 text-center">OC Target</th><th className="px-4 py-5 text-center">OC Ach.</th><th className="px-4 py-5 text-center">%</th><th className="px-8 py-5 text-center">AVG Hours</th></tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
-              {filteredManagerSummary.length === 0 ? (
-                <tr>
-                  <td colSpan="9" className="px-8 py-10 text-center font-bold text-slate-300 italic">No managers found matching filters.</td>
-                </tr>
-              ) : filteredManagerSummary.map((m, idx) => (
+              {filteredManagerSummary.map((m, idx) => (
                 <React.Fragment key={idx}>
                   <tr onClick={() => setSelectedManager(selectedManager === m.name ? null : m.name)} className={`cursor-pointer transition-colors ${selectedManager === m.name ? 'bg-red-50' : 'hover:bg-slate-50'}`}>
                     <td className="px-8 py-5 font-black text-slate-700 flex items-center gap-2">{selectedManager === m.name ? <ChevronDown size={14} className="text-red-500" /> : <ChevronRight size={14} className="text-slate-300" />}{m.name}</td>
@@ -447,22 +385,42 @@ function SalesCollectionForm({ areaManagers, shops, user, db, appId, userProfile
   const [formData, setFormData] = useState({ areaManager: isAdmin ? '' : assigned, shopName: '', gaAch: '', ocAch: '', workingHours: '', note: '', date: new Date().toISOString().split('T')[0] });
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
+
   const availableShops = useMemo(() => { const mgr = isAdmin ? formData.areaManager : assigned; return mgr ? shops.filter(s => s.manager === mgr) : []; }, [formData.areaManager, shops, isAdmin, assigned]);
+
   const handleSubmit = async (e) => {
     e.preventDefault(); setSubmitting(true);
-    try { await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'sales'), { ...formData, areaManager: isAdmin ? formData.areaManager : assigned, gaAch: Number(formData.gaAch), ocAch: Number(formData.ocAch), timestamp: Date.now(), submittedBy: user.uid }); setSuccess(true); setFormData({ areaManager: isAdmin ? '' : assigned, shopName: '', gaAch: '', ocAch: '', workingHours: '', note: '', date: new Date().toISOString().split('T')[0] }); setTimeout(() => setSuccess(false), 3000); } catch (err) { console.error(err); } setSubmitting(false);
+    try { 
+      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'sales'), { 
+        ...formData, 
+        areaManager: isAdmin ? formData.areaManager : assigned, 
+        gaAch: Number(formData.gaAch), 
+        ocAch: Number(formData.ocAch), 
+        workingHours: Number(formData.workingHours), // Stored as Number for easy AVG
+        timestamp: Date.now(), 
+        submittedBy: user.uid 
+      }); 
+      setSuccess(true); 
+      setFormData({ areaManager: isAdmin ? '' : assigned, shopName: '', gaAch: '', ocAch: '', workingHours: '', note: '', date: new Date().toISOString().split('T')[0] }); 
+      setTimeout(() => setSuccess(false), 3000); 
+    } catch (err) { console.error(err); } 
+    setSubmitting(false);
   };
+
   return (
     <div className="max-w-2xl mx-auto py-10">
       <h2 className="text-3xl font-black text-slate-800 mb-8 text-center italic uppercase tracking-tighter">Daily Sales Entry</h2>
       <form onSubmit={handleSubmit} className="bg-white p-12 rounded-[3.5rem] shadow-2xl space-y-8 border border-slate-50">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Date</label><input required type="date" className="w-full bg-slate-50 p-4 rounded-2xl font-bold border-none outline-none focus:ring-2 focus:ring-red-500/10" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} /></div>
+          <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Date</label><input required type="date" className="w-full bg-slate-50 p-4 rounded-2xl font-bold border-none outline-none" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} /></div>
           <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Manager</label><select required disabled={!isAdmin} className="w-full bg-slate-50 p-4 rounded-2xl font-bold outline-none" value={isAdmin ? formData.areaManager : assigned} onChange={e => setFormData({...formData, areaManager: e.target.value, shopName: ''})}>{areaManagers.map(m => <option key={m} value={m}>{m}</option>)}</select></div>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Shop</label><select required className="w-full bg-slate-50 p-4 rounded-2xl font-bold outline-none" value={formData.shopName} onChange={e => setFormData({...formData, shopName: e.target.value})}><option value="">Select Shop</option>{availableShops.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}</select></div>
-          <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Hours</label><input required type="text" placeholder="09:00 - 18:00" className="w-full bg-slate-50 p-4 rounded-2xl font-bold outline-none" value={formData.workingHours} onChange={e => setFormData({...formData, workingHours: e.target.value})} /></div>
+          <div className="space-y-1">
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Hours Worked</label>
+            <input required type="number" step="0.5" placeholder="e.g. 8" className="w-full bg-slate-50 p-4 rounded-2xl font-bold border-none outline-none" value={formData.workingHours} onChange={e => setFormData({...formData, workingHours: e.target.value})} />
+          </div>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <input required type="number" placeholder="GA Ach" className="w-full bg-red-50 p-6 rounded-[2rem] text-3xl font-black text-red-600 outline-none border border-red-100" value={formData.gaAch} onChange={e => setFormData({...formData, gaAch: e.target.value})} />
@@ -486,9 +444,9 @@ function SalesList({ records, targets, shops, managers, role, db, appId }) {
       <div className="flex justify-between items-center"><h2 className="text-3xl font-black text-slate-800 italic uppercase">Audit Trail</h2><input type="date" className="bg-white p-3 rounded-xl text-xs font-black shadow-sm outline-none" value={startDate} onChange={e => setStartDate(e.target.value)} /></div>
       <div className="bg-white rounded-[2.5rem] shadow-xl overflow-hidden overflow-x-auto">
         <table className="w-full text-left">
-          <thead className="bg-[#0F172A] text-slate-400 text-[10px] font-black uppercase tracking-widest"><tr className="tracking-widest"><th className="px-8 py-6">Time Stamp</th><th className="px-8 py-6">Date</th><th className="px-8 py-6 text-center">GA Ach</th><th className="px-8 py-6 text-center">% Completion</th><th className="px-8 py-6 text-center">OC Ach</th><th className="px-8 py-6 text-center">Working Hours</th>{role === 'admin' && <th className="px-8 py-6 text-right">Actions</th>}</tr></thead>
+          <thead className="bg-[#0F172A] text-slate-400 text-[10px] font-black uppercase tracking-widest"><tr className="tracking-widest"><th className="px-8 py-6">Time Stamp</th><th className="px-8 py-6">Date</th><th className="px-8 py-6 text-center">GA Ach</th><th className="px-8 py-6 text-center">% Completion</th><th className="px-8 py-6 text-center">OC Ach</th><th className="px-8 py-6 text-center">Hours Worked</th>{role === 'admin' && <th className="px-8 py-6 text-right">Actions</th>}</tr></thead>
           <tbody className="divide-y divide-slate-50 font-bold tabular-nums">
-            {filtered.map(r => (<tr key={r.id} className="hover:bg-slate-50"><td className="px-8 py-5 text-slate-400 text-[10px]">{new Date(r.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td><td className="px-8 py-5 text-slate-700">{r.date}</td><td className="px-8 py-5 text-center text-red-600">+{r.gaAch}</td><td className="px-8 py-5 text-center text-[10px] text-red-700">{(targets[r.shopName]?.ga > 0 ? (r.gaAch / targets[r.shopName].ga * 100).toFixed(1) : 0)}%</td><td className="px-8 py-5 text-center text-blue-600">+{r.ocAch}</td><td className="px-8 py-5 text-center text-slate-400 text-[10px]">{r.workingHours}</td>{role === 'admin' && <td className="px-8 py-5 text-right"><button onClick={async () => { if(confirm("Delete?")) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sales', r.id)); }} className="text-slate-200 hover:text-red-500"><Trash2 size={16} /></button></td>}</tr>))}
+            {filtered.map(r => (<tr key={r.id} className="hover:bg-slate-50"><td className="px-8 py-5 text-slate-400 text-[10px]">{new Date(r.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td><td className="px-8 py-5 text-slate-700">{r.date}</td><td className="px-8 py-5 text-center text-red-600">+{r.gaAch}</td><td className="px-8 py-5 text-center text-[10px] text-red-700">{(targets[r.shopName]?.ga > 0 ? (r.gaAch / targets[r.shopName].ga * 100).toFixed(1) : 0)}%</td><td className="px-8 py-5 text-center text-blue-600">+{r.ocAch}</td><td className="px-8 py-5 text-center text-slate-400 text-[10px]">{r.workingHours}h</td>{role === 'admin' && <td className="px-8 py-5 text-right"><button onClick={async () => { if(confirm("Delete?")) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sales', r.id)); }} className="text-slate-200 hover:text-red-500"><Trash2 size={16} /></button></td>}</tr>))}
           </tbody>
         </table>
       </div>
@@ -654,7 +612,3 @@ function Onboarding({ user, setView, setUserProfile }) {
 const styleTag = document.createElement('style');
 styleTag.innerHTML = `@media print { .no-print { display: none !important; } body { background: white !important; padding: 0 !important; margin: 0 !important; } main { margin: 0 !important; padding: 0 !important; width: 100% !important; max-width: 100% !important; } .md\\:pl-64 { padding-left: 0 !important; } nav { display: none !important; } .rounded-\\[2\\.5rem\\], .rounded-\\[3rem\\] { border-radius: 0 !important; border: 1px solid #eee !important; } } .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; } .custom-scrollbar::-webkit-scrollbar-thumb { background: #E2E8F0; border-radius: 10px; }`;
 document.head.appendChild(styleTag);
-
-
-
-
