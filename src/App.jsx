@@ -54,10 +54,7 @@ import {
   Activity,
   FileSpreadsheet,
   KeyRound,
-  ArrowLeft,
-  Clock,
-  Printer,
-  FileText
+  ArrowLeft
 } from 'lucide-react';
 
 // --- Firebase Configuration ---
@@ -81,87 +78,9 @@ try {
   console.error("Firebase init error:", e);
 }
 
-const appId = 'cashshop-sales-v1';
-
-// --- Helper Functions ---
-
-const parseHoursFromStr = (str) => {
-  if (!str) return 0;
-  try {
-    const parts = str.split('-').map(p => p.trim());
-    if (parts.length !== 2) return 0;
-    
-    const parseTime = (timeStr) => {
-      const [h, m] = timeStr.split(':').map(Number);
-      return h + (m || 0) / 60;
-    };
-
-    const start = parseTime(parts[0]);
-    const end = parseTime(parts[1]);
-    
-    let diff = end - start;
-    if (diff < 0) diff += 24; // Handle overnight shifts
-    return diff;
-  } catch (e) {
-    return 0;
-  }
-};
+const appId = 'pyramids-sales-v1';
 
 // --- Custom SVG Chart Components ---
-
-const ManagerBarChart = ({ data }) => {
-  if (!data || data.length === 0) return <div className="h-full flex items-center justify-center text-slate-300 text-xs italic">No comparative data</div>;
-  
-  const height = 200;
-  const width = 600;
-  const maxVal = Math.max(...data.map(d => Math.max(d.ga, d.oc)), 1);
-  const barWidth = (width / data.length) * 0.6;
-  const spacing = (width / data.length) * 0.4;
-
-  return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full overflow-visible">
-      {data.map((d, i) => {
-        const x = i * (barWidth + spacing);
-        const gaHeight = (d.ga / maxVal) * (height - 40);
-        const ocHeight = (d.oc / maxVal) * (height - 40);
-        
-        return (
-          <g key={i}>
-            {/* GA Bar */}
-            <rect 
-              x={x} 
-              y={height - gaHeight - 20} 
-              width={barWidth / 2} 
-              height={gaHeight} 
-              fill="#EF4444" 
-              rx="2"
-            />
-            {/* OC Bar */}
-            <rect 
-              x={x + barWidth / 2 + 2} 
-              y={height - ocHeight - 20} 
-              width={barWidth / 2} 
-              height={ocHeight} 
-              fill="#3B82F6" 
-              rx="2"
-            />
-            <text 
-              x={x + barWidth / 2} 
-              y={height} 
-              textAnchor="middle" 
-              fontSize="10" 
-              fontWeight="900" 
-              fill="#94A3B8"
-              className="uppercase tracking-tighter"
-            >
-              {d.name.substring(0, 3)}
-            </text>
-          </g>
-        );
-      })}
-    </svg>
-  );
-};
 
 const SimpleAreaChart = ({ data, color, dataKey }) => {
   if (!data || data.length === 0) return <div className="h-full flex items-center justify-center text-slate-300 text-xs italic">No trend data available</div>;
@@ -376,38 +295,6 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
     return data;
   }, [records, filterManager, filterShop, dateRange, isAdmin, assignedManager]);
 
-  const managerSummary = useMemo(() => {
-    const summary = managers.map(m => {
-      const mgrRecords = filteredRecords.filter(r => r.areaManager === m);
-      const mgrShops = shops.filter(s => s.manager === m);
-      
-      let totalTargetGA = 0;
-      let totalTargetOC = 0;
-      mgrShops.forEach(s => {
-        totalTargetGA += (targets[s.name]?.ga || 0);
-        totalTargetOC += (targets[s.name]?.oc || 0);
-      });
-
-      const totalAchGA = mgrRecords.reduce((acc, r) => acc + (r.gaAch || 0), 0);
-      const totalAchOC = mgrRecords.reduce((acc, r) => acc + (r.ocAch || 0), 0);
-      const totalHours = mgrRecords.reduce((acc, r) => acc + parseHoursFromStr(r.workingHours), 0);
-      const avgHours = mgrRecords.length > 0 ? (totalHours / mgrRecords.length).toFixed(1) : 0;
-
-      return {
-        name: m,
-        ga: totalAchGA,
-        oc: totalAchOC,
-        targetGA: totalTargetGA,
-        targetOC: totalTargetOC,
-        gaProgress: totalTargetGA > 0 ? ((totalAchGA / totalTargetGA) * 100).toFixed(1) : 0,
-        ocProgress: totalTargetOC > 0 ? ((totalAchOC / totalTargetOC) * 100).toFixed(1) : 0,
-        avgHours,
-        entries: mgrRecords.length
-      };
-    });
-    return summary;
-  }, [filteredRecords, managers, shops, targets]);
-
   const stats = useMemo(() => {
     const totalGA = filteredRecords.reduce((acc, curr) => acc + (curr.gaAch || 0), 0);
     const totalOC = filteredRecords.reduce((acc, curr) => acc + (curr.ocAch || 0), 0);
@@ -427,23 +314,29 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
     };
   }, [filteredRecords, targets, filterShop, filterManager, shops, isAdmin, assignedManager]);
 
-  const exportSummaryCSV = () => {
-    const headers = ['Manager', 'GA Achieved', 'GA Target', 'GA %', 'OC Achieved', 'OC Target', 'OC %', 'Avg Working Hours', 'Entries'];
-    const rows = managerSummary.map(m => [
-      m.name, m.ga, m.targetGA, m.gaProgress + '%', m.oc, m.targetOC, m.ocProgress + '%', m.avgHours, m.entries
-    ]);
-    const csvContent = "data:text/csv;charset=utf-8," + [headers, ...rows].map(e => `"${e.join('","')}"`).join("\n");
-    const link = document.createElement("a");
-    link.setAttribute("href", encodeURI(csvContent));
-    link.setAttribute("download", `Manager_Summary_${new Date().toLocaleDateString()}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
+  const chartDataTrend = useMemo(() => {
+    const dailyMap = {};
+    filteredRecords.forEach(r => {
+      const dateKey = new Date(r.timestamp).toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
+      if (!dailyMap[dateKey]) dailyMap[dateKey] = { name: dateKey, GA: 0, OC: 0 };
+      dailyMap[dateKey].GA += r.gaAch;
+      dailyMap[dateKey].OC += r.ocAch;
+    });
+    return Object.values(dailyMap).reverse().slice(-7);
+  }, [filteredRecords]);
+
+  const managerShareData = useMemo(() => {
+    const map = {};
+    filteredRecords.forEach(r => {
+      if (!map[r.areaManager]) map[r.areaManager] = 0;
+      map[r.areaManager] += r.gaAch + r.ocAch;
+    });
+    return Object.entries(map).map(([name, value]) => ({ name, value }));
+  }, [filteredRecords]);
 
   return (
     <div className="space-y-6 animate-in fade-in duration-700">
-      <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex flex-wrap items-center gap-4 sticky top-0 z-10 no-print">
+      <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex flex-wrap items-center gap-4 sticky top-0 z-10">
         <div className="flex items-center gap-2 border-r pr-4 border-slate-100">
           <Activity size={18} className="text-red-500" />
           <h2 className="font-black uppercase text-sm tracking-tight">Analytics</h2>
@@ -461,10 +354,6 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
         <select value={dateRange} onChange={e => setDateRange(e.target.value)} className="text-xs font-bold p-2 bg-slate-50 rounded-lg outline-none">
            <option value="Today">Today</option><option value="This Month">This Month</option><option value="All Time">All Time</option>
         </select>
-        <div className="ml-auto flex gap-2">
-           <button onClick={exportSummaryCSV} className="p-2 bg-slate-50 text-slate-500 rounded-lg hover:text-green-600 transition-all"><FileSpreadsheet size={18}/></button>
-           <button onClick={() => window.print()} className="p-2 bg-slate-50 text-slate-500 rounded-lg hover:text-red-600 transition-all"><Printer size={18}/></button>
-        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -474,94 +363,30 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
         <KPIBox title="Total Entries" value={filteredRecords.length} subtext="Entries recorded" color="#64748b" />
       </div>
 
-      {/* Visualizations */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-200">
-           <h3 className="font-black text-slate-700 text-xs uppercase mb-6 flex items-center gap-2">
-            <BarChart3 size={16} className="text-red-500" /> Manager Performance Benchmarking
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 bg-white p-6 rounded-3xl shadow-sm border border-slate-200">
+          <h3 className="font-black text-slate-700 text-xs uppercase mb-6 flex items-center gap-2">
+            <TrendingUp size={16} className="text-red-500" /> Daily GA Trend (Last 7 Days)
           </h3>
           <div className="h-[250px] w-full">
-            <ManagerBarChart data={managerSummary} />
-          </div>
-          <div className="mt-4 flex justify-center gap-4 text-[10px] font-black uppercase tracking-widest">
-            <div className="flex items-center gap-1"><div className="w-2 h-2 bg-red-500 rounded-full"></div> GA</div>
-            <div className="flex items-center gap-1"><div className="w-2 h-2 bg-blue-500 rounded-full"></div> OC</div>
+             <SimpleAreaChart data={chartDataTrend} color="#EF4444" dataKey="GA" />
           </div>
         </div>
-        <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-200">
+        <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 flex flex-col">
           <h3 className="font-black text-slate-700 text-xs uppercase mb-6 flex items-center gap-2">
-            <Clock size={16} className="text-blue-500" /> Regional Availability (Avg Shift Hours)
+            <PieIcon size={16} className="text-purple-500" /> Manager Distribution
           </h3>
-          <div className="space-y-4">
-            {managerSummary.map((m, i) => (
-              <div key={i} className="space-y-1">
-                <div className="flex justify-between text-[10px] font-black uppercase">
+          <div className="h-[180px] w-full mb-6">
+            <SimplePieChart data={managerShareData} />
+          </div>
+          <div className="flex-1 space-y-2 overflow-y-auto max-h-[100px] custom-scrollbar">
+             {managerShareData.map((m, i) => (
+               <div key={i} className="flex justify-between items-center text-[10px] font-bold">
                   <span>{m.name}</span>
-                  <span className="text-blue-600">{m.avgHours} hrs</span>
-                </div>
-                <div className="h-1.5 bg-slate-50 rounded-full overflow-hidden">
-                  <div className="h-full bg-blue-500 transition-all duration-700" style={{ width: `${Math.min((m.avgHours / 12) * 100, 100)}%` }} />
-                </div>
-              </div>
-            ))}
+                  <span className="text-slate-400">{m.value.toLocaleString()}</span>
+               </div>
+             ))}
           </div>
-        </div>
-      </div>
-
-      {/* Summary Table */}
-      <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-xl overflow-hidden print:shadow-none print:border-none">
-        <div className="p-8 border-b border-slate-100 flex justify-between items-center">
-          <div>
-            <h3 className="text-xl font-black italic tracking-tighter">Managerial Intelligence Summary</h3>
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Performance Matrix aggregated by personnel</p>
-          </div>
-          <Download size={20} className="text-slate-200 no-print" />
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <thead className="bg-slate-50 text-[10px] font-black uppercase tracking-widest text-slate-400">
-              <tr>
-                <th className="px-8 py-5">Area Manager</th>
-                <th className="px-6 py-5 text-center">GA Progress</th>
-                <th className="px-6 py-5 text-center">OC Progress</th>
-                <th className="px-6 py-5 text-center">Avg Shift</th>
-                <th className="px-6 py-5 text-center">Data Points</th>
-                <th className="px-8 py-5 text-right">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50 text-xs font-bold tabular-nums">
-              {managerSummary.map((m, i) => (
-                <tr key={i} className="hover:bg-slate-50 transition-colors">
-                  <td className="px-8 py-5 text-slate-900 font-black">{m.name}</td>
-                  <td className="px-6 py-5">
-                    <div className="flex flex-col items-center gap-1">
-                      <span className="text-red-600">{m.ga} / {m.targetGA}</span>
-                      <div className="w-20 h-1 bg-red-100 rounded-full overflow-hidden">
-                        <div className="h-full bg-red-500" style={{ width: `${Math.min(m.gaProgress, 100)}%` }} />
-                      </div>
-                      <span className="text-[9px] text-slate-400">{m.gaProgress}%</span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-5">
-                    <div className="flex flex-col items-center gap-1">
-                      <span className="text-blue-600">{m.oc} / {m.targetOC}</span>
-                      <div className="w-20 h-1 bg-blue-100 rounded-full overflow-hidden">
-                        <div className="h-full bg-blue-500" style={{ width: `${Math.min(m.ocProgress, 100)}%` }} />
-                      </div>
-                      <span className="text-[9px] text-slate-400">{m.ocProgress}%</span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-5 text-center text-slate-500">{m.avgHours} hrs</td>
-                  <td className="px-6 py-5 text-center text-slate-400">{m.entries} records</td>
-                  <td className="px-8 py-5 text-right">
-                    <span className={`px-2 py-1 rounded-full text-[9px] font-black uppercase ${(m.gaProgress + m.ocProgress) / 2 >= 80 ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
-                      {(m.gaProgress + m.ocProgress) / 2 >= 80 ? 'Peak' : 'Review'}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
         </div>
       </div>
     </div>
@@ -600,7 +425,7 @@ function LoadingScreen() {
     <div className="flex h-screen items-center justify-center bg-slate-50">
       <div className="text-center">
         <Loader2 className="w-12 h-12 animate-spin text-red-600 mx-auto mb-4" />
-        <p className="text-slate-500 font-bold tracking-tighter">CashShop Systems Cloud...</p>
+        <p className="text-slate-500 font-bold tracking-tighter">PE Systems Cloud...</p>
       </div>
     </div>
   );
@@ -626,80 +451,82 @@ function LoginPortal() {
         await signInWithEmailAndPassword(auth, email, password);
       } else if (authMode === 'forgot') {
         await sendPasswordResetEmail(auth, email);
-        setMessage("Recovery sequence initiated. Check your inbox.");
+        setMessage("Password reset link sent! Please check your email inbox.");
         setLoading(false);
         return;
       }
     } catch (err) {
       const errMsg = err.message.replace('Firebase:', '').trim();
-      setError(errMsg || "Verification Failed");
+      setError(errMsg || "Authentication failed.");
     }
     setLoading(false);
   };
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#0F172A] p-4">
-      <div className="w-full max-w-md bg-white rounded-[3.5rem] p-12 shadow-2xl relative overflow-hidden">
-        <div className="absolute top-0 right-0 w-32 h-32 bg-red-500/5 rounded-bl-[100px]"></div>
-        
+      <div className="w-full max-md bg-white rounded-[3rem] p-10 shadow-2xl">
         <div className="text-center mb-10">
-          <div className="inline-flex p-4 bg-slate-50 rounded-3xl mb-4">
-            {authMode === 'forgot' ? <KeyRound size={32} className="text-red-600" /> : <ShieldCheck size={32} className="text-red-600" />}
-          </div>
-          <h1 className="text-3xl font-black text-slate-800 tracking-tighter italic">CashShop Sales</h1>
-          <p className="text-slate-400 font-bold text-[10px] uppercase tracking-[0.3em] mt-2">
-            {authMode === 'forgot' ? 'Credential Recovery' : 'Salesforce Portal'}
+          <h1 className="text-3xl font-black text-slate-800 tracking-tighter mb-2 italic">Cash Shop Sales</h1>
+          <p className="text-slate-400 font-bold text-[10px] uppercase tracking-widest mt-1">
+            {authMode === 'forgot' ? 'Reset Password' : 'Enterprise Sales Portal'}
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="space-y-2">
-            <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Email Address</label>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-1">
+            <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Email</label>
             <div className="relative">
-              <Mail className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
+              <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
               <input 
-                required type="email" placeholder="user@pyramids.com" 
-                className="w-full bg-slate-50 border border-slate-100 p-5 pl-14 rounded-2xl font-bold outline-none focus:ring-4 focus:ring-red-500/10 transition-all"
+                required type="email" placeholder="name@company.com" 
+                className="w-full bg-slate-50 border border-slate-100 p-4 pl-12 rounded-2xl font-bold outline-none focus:ring-2 focus:ring-red-500/20"
                 value={email} onChange={e => setEmail(e.target.value)} 
               />
             </div>
           </div>
 
           {authMode !== 'forgot' && (
-            <div className="space-y-2">
-              <div className="flex justify-between items-center px-2">
-                <label className="text-[10px] font-black uppercase text-slate-400">Security Key</label>
-                <button type="button" onClick={() => setAuthMode('forgot')} className="text-[9px] font-black uppercase text-red-600 hover:tracking-widest transition-all">Forgot Key?</button>
+            <div className="space-y-1">
+              <div className="flex justify-between items-center px-1">
+                <label className="text-[10px] font-black uppercase text-slate-400">Password</label>
+                <button 
+                  type="button" 
+                  onClick={() => setAuthMode('forgot')}
+                  className="text-[10px] font-black uppercase text-red-600 hover:underline"
+                >
+                  Forgot?
+                </button>
               </div>
               <div className="relative">
-                <Lock className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
+                <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
                 <input 
                   required type="password" placeholder="••••••••" 
-                  className="w-full bg-slate-50 border border-slate-100 p-5 pl-14 rounded-2xl font-bold outline-none focus:ring-4 focus:ring-red-500/10 transition-all"
+                  className="w-full bg-slate-50 border border-slate-100 p-4 pl-12 rounded-2xl font-bold outline-none focus:ring-2 focus:ring-red-500/20"
                   value={password} onChange={e => setPassword(e.target.value)} 
                 />
               </div>
             </div>
           )}
 
-          {error && <div className="p-4 bg-red-50 text-red-500 rounded-2xl text-[10px] font-black text-center border border-red-100 animate-shake">{error}</div>}
-          {message && <div className="p-4 bg-green-50 text-green-600 rounded-2xl text-[10px] font-black text-center border border-green-100">{message}</div>}
+          {error && <div className="p-3 bg-red-50 text-red-500 rounded-xl text-[10px] font-black text-center border border-red-100">{error}</div>}
+          {message && <div className="p-3 bg-red-50 text-red-600 rounded-xl text-[10px] font-black text-center border border-red-100">{message}</div>}
 
-          <button disabled={loading} className="w-full bg-[#0F172A] text-white py-6 rounded-2xl font-black text-lg shadow-xl hover:bg-black transition-all flex items-center justify-center gap-3">
+          <button disabled={loading} className="w-full bg-[#0F172A] text-white py-5 rounded-2xl font-black text-lg shadow-xl hover:bg-black transition-all flex items-center justify-center gap-2">
             {loading ? <Loader2 className="animate-spin" /> : (
               authMode === 'signup' ? 'Create Account' : 
-              authMode === 'forgot' ? 'Send Link' : 'Secure Access'
+              authMode === 'forgot' ? 'Send Reset Link' : 'Login'
             )}
           </button>
         </form>
 
-        <div className="mt-10 flex flex-col items-center gap-4">
-          <button onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')} className="text-slate-400 font-bold text-[10px] uppercase tracking-widest hover:text-red-600 transition-colors">
-            {authMode === 'login' ? "Unauthorized? Create Account" : "Registered? Login Now"}
-          </button>
-          {authMode === 'forgot' && (
-            <button onClick={() => setAuthMode('login')} className="flex items-center gap-2 text-slate-400 font-bold text-[10px] uppercase">
-              <ArrowLeft size={14} /> Back to Entry
+        <div className="mt-8 flex flex-col items-center gap-3">
+          {authMode === 'forgot' ? (
+            <button onClick={() => setAuthMode('login')} className="text-slate-400 font-bold text-xs uppercase flex items-center gap-2 hover:text-slate-600">
+              <ArrowLeft size={14} /> Back to Login
+            </button>
+          ) : (
+            <button onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')} className="text-slate-400 font-bold text-xs uppercase tracking-widest hover:text-red-600 transition-colors">
+              {authMode === 'login' ? "Don't have an account? Register" : "Already have an account? Login"}
             </button>
           )}
         </div>
@@ -721,14 +548,10 @@ function Onboarding({ user, setView, setUserProfile }) {
   };
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC] p-4">
-      <div className="w-full max-w-md bg-white rounded-[3.5rem] p-12 shadow-xl text-center">
-        <div className="w-20 h-20 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-8">
-           <UserIcon size={32} className="text-red-600" />
-        </div>
-        <h2 className="text-2xl font-black text-slate-800 mb-2 italic">Profile Activation</h2>
-        <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest mb-10">Enter your official full name</p>
-        <input type="text" value={name} onChange={e => setName(e.target.value)} className="w-full bg-slate-50 p-6 rounded-3xl font-black mb-8 text-center text-xl outline-none focus:ring-4 focus:ring-red-500/5 transition-all" placeholder="John Doe" />
-        <button onClick={handleSave} disabled={loading || !name} className="w-full bg-red-600 text-white py-6 rounded-3xl font-black text-lg shadow-xl shadow-red-600/20 active:scale-95 transition-all">Proceed to Cloud</button>
+      <div className="w-full max-w-md bg-white rounded-[3rem] p-10 shadow-xl text-center">
+        <h2 className="text-2xl font-black text-slate-800 mb-6 italic">Enter Your Full Name</h2>
+        <input type="text" value={name} onChange={e => setName(e.target.value)} className="w-full bg-slate-50 p-5 rounded-2xl font-bold mb-6 text-center text-xl outline-none" />
+        <button onClick={handleSave} disabled={loading || !name} className="w-full bg-red-600 text-white py-5 rounded-2xl font-black text-lg">Continue</button>
       </div>
     </div>
   );
@@ -738,26 +561,25 @@ function Navigation({ view, setView, role, onLogout }) {
   const links = [
     { id: 'dashboard', label: 'Dashboard', icon: BarChart3, roles: ['admin', 'user'] },
     { id: 'collection', label: 'Sales Entry', icon: PlusCircle, roles: ['admin', 'user'] },
-    { id: 'reports', label: 'Intelligence', icon: ClipboardList, roles: ['admin', 'user'] },
-    { id: 'targets', label: 'Benchmarks', icon: Target, roles: ['admin'] },
-    { id: 'userSearch', label: 'Personnel', icon: UsersIcon, roles: ['admin'] },
+    { id: 'reports', label: 'Sales History', icon: ClipboardList, roles: ['admin', 'user'] },
+    { id: 'targets', label: 'Monthly Targets', icon: Target, roles: ['admin'] },
+    { id: 'userSearch', label: 'Team Members', icon: UsersIcon, roles: ['admin'] },
     { id: 'admin', label: 'System Admin', icon: Settings, roles: ['admin'] },
   ];
   return (
-    <nav className="hidden md:flex flex-col fixed left-0 top-0 bottom-0 w-64 bg-[#0F172A] text-slate-300 p-8 z-40">
-      <div className="mb-14 flex items-center gap-3">
-        <div className="w-10 h-10 bg-red-600 rounded-2xl flex items-center justify-center font-black text-white text-xl shadow-lg italic">CS</div>
-        <h1 className="text-xl font-black text-white tracking-tighter uppercase italic">CashShop</h1>
+    <nav className="hidden md:flex flex-col fixed left-0 top-0 bottom-0 w-64 bg-[#0F172A] text-slate-300 p-6 z-40">
+      <div className="mb-10 px-2 py-4 border-b border-slate-800">
+        <h1 className="text-2xl font-black text-white tracking-tighter uppercase italic">Cash Shop Sales</h1>
       </div>
-      <div className="space-y-2 flex-1">
+      <div className="space-y-1 flex-1">
         {links.map(link => link.roles.includes(role) && (
-          <button key={link.id} onClick={() => setView(link.id)} className={`w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all ${view === link.id ? 'bg-red-600 text-white shadow-xl shadow-red-600/20' : 'hover:bg-slate-800 hover:text-white'}`}>
-            <link.icon size={20} className={view === link.id ? 'text-white' : 'text-slate-500'} /> <span className="font-bold text-sm">{link.label}</span>
+          <button key={link.id} onClick={() => setView(link.id)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${view === link.id ? 'bg-red-600/10 text-red-400 border border-red-600/20' : 'hover:bg-slate-800'}`}>
+            <link.icon size={18} /> <span className="font-medium text-sm">{link.label}</span>
           </button>
         ))}
       </div>
-      <button onClick={onLogout} className="mt-auto flex items-center gap-4 px-5 py-4 rounded-2xl text-red-400 hover:bg-red-500/10 font-black text-sm transition-all border border-transparent hover:border-red-500/20">
-        <LogOut size={20} /> Logout
+      <button onClick={onLogout} className="mt-auto flex items-center gap-3 px-4 py-3 rounded-xl text-red-400 hover:bg-red-400/10 font-bold text-sm transition-all">
+        <LogOut size={18} /> Logout
       </button>
     </nav>
   );
@@ -766,10 +588,10 @@ function Navigation({ view, setView, role, onLogout }) {
 function MobileNav({ view, setView, role }) {
   const icons = [{id:'dashboard', icon:BarChart3, roles:['admin','user']}, {id:'collection', icon:PlusCircle, roles:['admin','user']}, {id:'reports', icon:ClipboardList, roles:['admin','user']}, {id:'targets', icon:Target, roles:['admin']}, {id:'userSearch', icon:UsersIcon, roles:['admin']}];
   return (
-    <div className="fixed bottom-0 left-0 right-0 bg-white border-t flex justify-around p-4 md:hidden z-50 rounded-t-3xl shadow-2xl">
+    <div className="fixed bottom-0 left-0 right-0 bg-white border-t flex justify-around p-3 md:hidden z-50">
       {icons.map(item => item.roles.includes(role) && (
-        <button key={item.id} onClick={() => setView(item.id)} className={`p-3 rounded-2xl transition-all ${view === item.id ? 'text-red-600 bg-red-50' : 'text-slate-300'}`}>
-          <item.icon size={24} />
+        <button key={item.id} onClick={() => setView(item.id)} className={`p-2 rounded-xl ${view === item.id ? 'text-red-600 bg-red-50' : 'text-slate-400'}`}>
+          <item.icon size={22} />
         </button>
       ))}
     </div>
@@ -824,53 +646,42 @@ function SalesCollectionForm({ areaManagers, shops, user, db, appId, userProfile
 
   return (
     <div className="max-w-xl mx-auto py-10">
-      <h2 className="text-4xl font-black text-slate-900 mb-10 text-center italic tracking-tighter">New Intelligence Entry</h2>
-      <form onSubmit={handleSubmit} className="bg-white p-12 rounded-[3.5rem] border border-slate-200 shadow-2xl space-y-8">
-        <div className="grid grid-cols-1 gap-6">
-          <div className="space-y-1">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-2">Manager</label>
-            <select 
-              required 
-              disabled={!isAdmin}
-              className="w-full bg-slate-50 p-5 rounded-2xl font-bold disabled:opacity-50 border border-slate-100 outline-none" 
-              value={isAdmin ? formData.areaManager : assigned} 
-              onChange={e => setFormData({...formData, areaManager: e.target.value, shopName: ''})}
-            >
-              <option value="">Select Personnel</option>
-              {areaManagers.map(m => <option key={m} value={m}>{m}</option>)}
-            </select>
-          </div>
-          <div className="space-y-1">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-2">Shop Location</label>
-            <select 
-              required 
-              disabled={!isAdmin && !assigned}
-              className="w-full bg-slate-50 p-5 rounded-2xl font-bold disabled:opacity-50 border border-slate-100 outline-none" 
-              value={formData.shopName} 
-              onChange={e => setFormData({...formData, shopName: e.target.value})}
-            >
-              <option value="">Select Location</option>
-              {availableShops.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
-            </select>
-          </div>
-          <div className="space-y-1">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-2">Shift Schedule</label>
-            <input required type="text" placeholder="HH:MM - HH:MM" className="w-full bg-slate-50 p-5 rounded-2xl font-bold border border-slate-100 outline-none" value={formData.workingHours} onChange={e => setFormData({...formData, workingHours: e.target.value})} />
-          </div>
+      <h2 className="text-4xl font-black text-slate-800 mb-8 text-center italic">Daily Sales Entry</h2>
+      <form onSubmit={handleSubmit} className="bg-white p-10 rounded-[3rem] border border-slate-200 shadow-xl space-y-6">
+        <div className="space-y-1">
+          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Area Manager</label>
+          <select 
+            required 
+            disabled={!isAdmin}
+            className="w-full bg-slate-50 p-4 rounded-xl font-bold disabled:opacity-50" 
+            value={isAdmin ? formData.areaManager : assigned} 
+            onChange={e => setFormData({...formData, areaManager: e.target.value, shopName: ''})}
+          >
+            <option value="">Select Manager</option>
+            {areaManagers.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
         </div>
+        <div className="space-y-1">
+          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Shop Location</label>
+          <select 
+            required 
+            disabled={!isAdmin && !assigned}
+            className="w-full bg-slate-50 p-4 rounded-xl font-bold disabled:opacity-50" 
+            value={formData.shopName} 
+            onChange={e => setFormData({...formData, shopName: e.target.value})}
+          >
+            <option value="">Select Shop</option>
+            {availableShops.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
+          </select>
+        </div>
+        <input required type="text" placeholder="Working Hours (e.g., 09:00 - 18:00)" className="w-full bg-slate-50 p-4 rounded-xl font-bold" value={formData.workingHours} onChange={e => setFormData({...formData, workingHours: e.target.value})} />
         <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-1">
-            <label className="text-[10px] font-black text-red-500 uppercase tracking-widest px-2">GA Achieved</label>
-            <input required type="number" className="w-full bg-red-50 p-8 rounded-3xl text-3xl font-black text-red-600 outline-none text-center border border-red-100" value={formData.gaAch} onChange={e => setFormData({...formData, gaAch: e.target.value})} />
-          </div>
-          <div className="space-y-1">
-            <label className="text-[10px] font-black text-blue-500 uppercase tracking-widest px-2">OC Achieved</label>
-            <input required type="number" className="w-full bg-blue-50 p-8 rounded-3xl text-3xl font-black text-blue-600 outline-none text-center border border-blue-100" value={formData.ocAch} onChange={e => setFormData({...formData, ocAch: e.target.value})} />
-          </div>
+          <input required type="number" placeholder="GA Ach" className="w-full bg-red-50 p-6 rounded-2xl text-2xl font-black text-red-600 outline-none" value={formData.gaAch} onChange={e => setFormData({...formData, gaAch: e.target.value})} />
+          <input required type="number" placeholder="OC Ach" className="w-full bg-blue-50 p-6 rounded-2xl text-2xl font-black text-blue-600 outline-none" value={formData.ocAch} onChange={e => setFormData({...formData, ocAch: e.target.value})} />
         </div>
-        <textarea placeholder="Observation Notes..." className="w-full bg-slate-50 p-5 rounded-2xl min-h-[120px] font-medium border border-slate-100 outline-none focus:ring-4 focus:ring-red-500/5 transition-all" value={formData.note} onChange={e => setFormData({...formData, note: e.target.value})} />
-        <button type="submit" disabled={submitting || (!isAdmin && !assigned)} className="w-full bg-[#0F172A] text-white py-6 rounded-3xl font-black text-xl shadow-xl shadow-slate-900/10 disabled:opacity-30 active:scale-95 transition-all">
-          {!isAdmin && !assigned ? 'Assignment Restricted' : (submitting ? 'Encrypting...' : 'Secure Submit')}
+        <textarea placeholder="Shift Feedback / Notes" className="w-full bg-slate-50 p-4 rounded-xl min-h-[100px]" value={formData.note} onChange={e => setFormData({...formData, note: e.target.value})} />
+        <button type="submit" disabled={submitting || (!isAdmin && !assigned)} className="w-full bg-[#0F172A] text-white py-6 rounded-2xl font-black text-xl shadow-lg disabled:opacity-30">
+          {!isAdmin && !assigned ? 'No Region Assigned' : (submitting ? 'Submitting...' : 'Confirm Submission')}
         </button>
       </form>
     </div>
@@ -903,7 +714,7 @@ function SalesList({ records, targets, shops, managers, role, db, appId }) {
   }, [records]);
 
   const handleDelete = async (id) => { 
-    if (confirm("Permanently erase this record from history?")) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sales', id)); 
+    if (confirm("Are you sure you want to delete this record?")) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sales', id)); 
   };
 
   const exportToExcel = () => {
@@ -940,83 +751,82 @@ function SalesList({ records, targets, shops, managers, role, db, appId }) {
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `Sales_Audit_${new Date().toLocaleDateString()}.csv`);
+    link.setAttribute("download", `Sales_Report_${new Date().toLocaleDateString()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500">
-      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-6">
+    <div className="space-y-6">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h2 className="text-4xl font-black text-slate-900 uppercase italic tracking-tighter">Audit Logs</h2>
-          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-[0.3em] mt-2">Operational Data & Performance Audit</p>
+          <h2 className="text-3xl font-black text-slate-800 uppercase italic">Collection History</h2>
+          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">Audit and Data Analysis</p>
         </div>
-        <div className="flex flex-wrap gap-3">
-          <input type="date" className="bg-white p-3 rounded-2xl text-xs border border-slate-100 shadow-sm font-black outline-none" value={startDate} onChange={e => setStartDate(e.target.value)} />
-          <input type="date" className="bg-white p-3 rounded-2xl text-xs border border-slate-100 shadow-sm font-black outline-none" value={endDate} onChange={e => setEndDate(e.target.value)} />
-          <select value={filterManager} onChange={e => {setFilterManager(e.target.value); setFilterShop('All')}} className="bg-white px-6 py-3 border border-slate-100 rounded-2xl font-black text-xs shadow-sm outline-none">
-            <option value="All">All Leads</option>
+        <div className="flex flex-wrap gap-2">
+          <input type="date" className="bg-white p-2 rounded-xl text-xs border border-slate-100 shadow-sm font-bold" value={startDate} onChange={e => setStartDate(startDate)} />
+          <input type="date" className="bg-white p-2 rounded-xl text-xs border border-slate-100 shadow-sm font-bold" value={endDate} onChange={e => setEndDate(endDate)} />
+          <select value={filterManager} onChange={e => {setFilterManager(e.target.value); setFilterShop('All')}} className="bg-white p-2 border border-slate-100 rounded-xl font-bold text-xs shadow-sm">
+            <option value="All">All Managers</option>
             {managers.map(m => <option key={m} value={m}>{m}</option>)}
           </select>
-          <button onClick={exportToExcel} className="flex items-center gap-2 bg-[#0F172A] text-white px-6 py-3 rounded-2xl font-black text-[11px] hover:bg-black shadow-lg transition-all active:scale-95">
-            <FileSpreadsheet size={16} /> Export Intelligence
+          <button onClick={exportToExcel} className="flex items-center gap-2 bg-red-600 text-white px-5 py-2.5 rounded-xl font-black text-xs hover:bg-red-700 shadow-lg transition-all">
+            <FileSpreadsheet size={16} /> Export CSV
           </button>
         </div>
       </div>
-      <div className="bg-white rounded-[3rem] border border-slate-200 shadow-2xl overflow-x-auto custom-scrollbar">
+      <div className="bg-white rounded-[2rem] border border-slate-200 shadow-2xl overflow-x-auto custom-scrollbar">
         <table className="w-full text-left min-w-[1400px]">
-          <thead className="bg-slate-50 border-b border-slate-100">
-            <tr className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-              <th className="px-8 py-6">Date / Timestamp</th>
-              <th className="px-8 py-6">Location</th>
-              <th className="px-6 py-6 text-red-500 text-center bg-red-50/20">GA Goal</th>
-              <th className="px-6 py-4 text-red-500 text-center bg-red-50/20">GA Ach</th>
-              <th className="px-6 py-4 text-red-500 text-center bg-red-50/20">GA %</th>
-              <th className="px-6 py-5 text-blue-500 text-center bg-blue-50/20">OC Goal</th>
-              <th className="px-6 py-4 text-blue-500 text-center bg-blue-50/20">OC Ach</th>
-              <th className="px-6 py-4 text-blue-500 text-center bg-blue-50/20">OC %</th>
-              <th className="px-8 py-5">Personnel</th>
-              {role === 'admin' && <th className="px-8 py-4 text-right">Actions</th>}
+          <thead className="bg-slate-900 text-slate-400">
+            <tr className="text-[10px] font-black uppercase">
+              <th className="px-6 py-5">Date / Time</th>
+              <th className="px-6 py-5">Shop Name</th>
+              <th className="px-6 py-5 text-red-400 text-center bg-red-950/20">GA Goal</th>
+              <th className="px-6 py-4 text-red-400 text-center bg-red-950/20">GA Ach</th>
+              <th className="px-6 py-4 text-red-400 text-center bg-red-950/20">GA %</th>
+              <th className="px-6 py-4 text-red-400 text-center bg-red-950/20">GA Rem.</th>
+              <th className="px-6 py-5 text-blue-400 text-center bg-blue-950/20">OC Goal</th>
+              <th className="px-6 py-4 text-blue-400 text-center bg-blue-950/20">OC Ach</th>
+              <th className="px-6 py-4 text-blue-400 text-center bg-blue-950/20">OC %</th>
+              <th className="px-6 py-4 text-blue-400 text-center bg-blue-950/20">OC Rem.</th>
+              <th className="px-6 py-5">Manager</th>
+              {role === 'admin' && <th className="px-6 py-4 text-right">Action</th>}
             </tr>
           </thead>
-          <tbody className="divide-y text-[11px] font-bold divide-slate-50">
+          <tbody className="divide-y text-xs font-bold divide-slate-100">
             {filtered.map(r => {
               const target = targets[r.shopName] || { ga: 0, oc: 0 };
               const shopTotals = shopAggregates[r.shopName] || { totalGA: 0, totalOC: 0 };
-              const gaPercent = target.ga > 0 ? ((shopTotals.totalGA / target.ga) * 100).toFixed(0) : '0';
-              const ocPercent = target.oc > 0 ? ((shopTotals.totalOC / target.oc) * 100).toFixed(0) : '0';
+              const gaPercent = target.ga > 0 ? ((shopTotals.totalGA / target.ga) * 100).toFixed(1) : '0';
+              const ocPercent = target.oc > 0 ? ((shopTotals.totalOC / target.oc) * 100).toFixed(1) : '0';
 
               return (
-                <tr key={r.id} className="hover:bg-slate-50/50 transition-all tabular-nums">
-                  <td className="px-8 py-6">
+                <tr key={r.id} className="hover:bg-slate-50 transition-all tabular-nums">
+                  <td className="px-6 py-4">
                     <div className="flex flex-col">
-                      <span className="text-slate-900 text-sm font-black tracking-tight">{new Date(r.timestamp).toLocaleDateString()}</span>
-                      <span className="text-[9px] text-slate-400 uppercase tracking-widest">{new Date(r.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      <span className="text-slate-800">{new Date(r.timestamp).toLocaleDateString()}</span>
+                      <span className="text-[10px] text-slate-400 font-bold">{new Date(r.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                     </div>
                   </td>
-                  <td className="px-8 py-6 text-slate-800 font-black tracking-tighter text-[13px]">{r.shopName}</td>
+                  <td className="px-6 py-4 text-slate-900 font-black tracking-tight">{r.shopName}</td>
                   
                   {/* GA STATS */}
-                  <td className="px-4 py-4 text-center bg-red-50/10 text-slate-400">{target.ga}</td>
-                  <td className="px-4 py-4 text-center bg-red-50/10 text-red-600 font-black text-sm">+{r.gaAch}</td>
+                  <td className="px-4 py-4 text-center bg-red-50/10 text-slate-400">{target.ga.toLocaleString()}</td>
+                  <td className="px-4 py-4 text-center bg-red-50/10 text-red-600 font-black">+{r.gaAch}</td>
                   <td className="px-4 py-4 text-center bg-red-50/10 text-red-700">{gaPercent}%</td>
+                  <td className="px-4 py-4 text-center bg-red-50/10 text-red-900">{Math.max(0, target.ga - shopTotals.totalGA).toLocaleString()}</td>
 
                   {/* OC STATS */}
-                  <td className="px-4 py-4 text-center bg-blue-50/10 text-slate-400">{target.oc}</td>
-                  <td className="px-4 py-4 text-center bg-blue-50/10 text-blue-600 font-black text-sm">+{r.ocAch}</td>
+                  <td className="px-4 py-4 text-center bg-blue-50/10 text-slate-400">{target.oc.toLocaleString()}</td>
+                  <td className="px-4 py-4 text-center bg-blue-50/10 text-blue-600 font-black">+{r.ocAch}</td>
                   <td className="px-4 py-4 text-center bg-blue-50/10 text-blue-700">{ocPercent}%</td>
+                  <td className="px-4 py-4 text-center bg-blue-50/10 text-blue-900">{Math.max(0, target.oc - shopTotals.totalOC).toLocaleString()}</td>
 
-                  <td className="px-8 py-6">
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center text-[8px] text-slate-400">{r.areaManager.charAt(0)}</div>
-                      <span className="text-slate-500 uppercase tracking-tighter text-[10px]">{r.areaManager}</span>
-                    </div>
-                  </td>
-                  {role === 'admin' && <td className="px-8 py-4 text-right">
-                    <button onClick={() => handleDelete(r.id)} className="p-3 text-slate-200 hover:text-red-500 transition-all hover:bg-red-50 rounded-2xl">
-                      <Trash2 size={16} />
+                  <td className="px-6 py-4 text-slate-400 uppercase tracking-tighter">{r.areaManager}</td>
+                  {role === 'admin' && <td className="px-6 py-4 text-right">
+                    <button onClick={() => handleDelete(r.id)} className="p-2 text-red-400 hover:bg-red-50 rounded-lg transition-all">
+                      <Trash2 size={14} />
                     </button>
                   </td>}
                 </tr>
@@ -1032,8 +842,9 @@ function SalesList({ records, targets, shops, managers, role, db, appId }) {
 function TargetSetting({ shops, areaManagers, targets, db, appId }) {
   const [filterManager, setFilterManager] = useState('All');
   const [searchTerm, setSearchTerm] = useState('');
+  const [editingShop, setEditingShop] = useState(null);
+  const [editForm, setEditForm] = useState({ ga: 0, oc: 0 });
   const [status, setStatus] = useState(null);
-  const [loading, setLoading] = useState(false);
 
   const filteredShops = useMemo(() => 
     shops.filter(s => 
@@ -1042,24 +853,17 @@ function TargetSetting({ shops, areaManagers, targets, db, appId }) {
     ), [shops, filterManager, searchTerm]
   );
 
-  const handleInlineSave = async (shopName, field, value) => {
-    const val = Number(value);
-    const newTargets = { 
-      ...targets, 
-      [shopName]: { 
-        ...targets[shopName], 
-        [field]: val 
-      } 
-    };
-    try {
-      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config'), { targets: newTargets, areaManagers, shops }, { merge: true });
-    } catch (e) { console.error(e); }
+  const handleSave = async (shopName) => {
+    const newTargets = { ...targets, [shopName]: { ga: Number(editForm.ga), oc: Number(editForm.oc) } };
+    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config'), { targets: newTargets, areaManagers, shops }, { merge: true });
+    setEditingShop(null);
+    setStatus("Target updated successfully.");
+    setTimeout(() => setStatus(null), 2000);
   };
 
   const handleCSVUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    setLoading(true);
     const reader = new FileReader();
     reader.onload = async (event) => {
       try {
@@ -1075,95 +879,74 @@ function TargetSetting({ shops, areaManagers, targets, db, appId }) {
           }
         });
         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config'), { targets: newTargets, areaManagers, shops }, { merge: true });
-        setStatus("Target Matrix Updated via Bulk Load");
+        setStatus("CSV Upload Success!");
         setTimeout(() => setStatus(null), 3000);
-      } catch (err) { setStatus("Sync Failure: Validate CSV format"); }
-      setLoading(false);
+      } catch (err) { setStatus("Error processing CSV file."); }
     };
     reader.readAsText(file);
   };
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500 pb-20">
-      <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
-        <div>
-          <h2 className="text-4xl font-black uppercase tracking-tighter text-slate-900 italic">Benchmark Matrix</h2>
-          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-[0.3em] mt-2">Operational Goal Synchronizer</p>
-        </div>
-        <div className="flex items-center gap-3">
-           <label className="bg-[#0F172A] text-white px-8 py-4 rounded-2xl text-[11px] font-black cursor-pointer flex items-center gap-3 shadow-xl hover:bg-black transition-all active:scale-95">
-             <Upload size={18} /> {loading ? 'Synchronizing...' : 'Bulk Excel Load'}
-             <input type="file" className="hidden" accept=".csv" onChange={handleCSVUpload} disabled={loading} />
+    <div className="space-y-6">
+      <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <h2 className="text-3xl font-black uppercase tracking-tighter text-slate-800">Target Controls</h2>
+        <div className="flex items-center gap-2">
+           <label className="bg-red-600 text-white px-4 py-2 rounded-xl text-xs font-black cursor-pointer flex items-center gap-2 shadow-lg">
+             <FileSpreadsheet size={16} /> Bulk Upload CSV
+             <input type="file" className="hidden" accept=".csv" onChange={handleCSVUpload} />
            </label>
         </div>
       </header>
       
-      {status && <div className="bg-red-600 text-white p-4 rounded-2xl text-center text-[10px] font-black uppercase tracking-widest shadow-xl animate-bounce">{status}</div>}
+      {status && <div className="bg-red-50 text-red-700 p-3 rounded-xl text-center text-xs font-bold">{status}</div>}
 
       <div className="flex flex-col md:flex-row gap-4">
         <div className="relative flex-1">
-          <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-300" size={18}/>
-          <input type="text" placeholder="Filter by Location Name..." className="w-full bg-white p-6 pl-16 rounded-[2.5rem] shadow-sm outline-none border border-slate-100 font-bold focus:ring-4 focus:ring-red-500/5 transition-all" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={18}/>
+          <input type="text" placeholder="Search shops..." className="w-full bg-white p-4 pl-12 rounded-2xl shadow-sm outline-none border border-slate-100" value={searchTerm} onChange={e => setSearchTerm(searchTerm)} />
         </div>
-        <select value={filterManager} onChange={e => setFilterManager(e.target.value)} className="bg-white px-8 py-4 rounded-[2.5rem] shadow-sm font-black text-xs border border-slate-100 outline-none">
-          <option value="All">All Lead Regions</option>
+        <select value={filterManager} onChange={e => setFilterManager(e.target.value)} className="bg-white px-4 py-4 rounded-2xl shadow-sm font-bold text-sm border border-slate-100">
+          <option value="All">All Managers</option>
           {areaManagers.map(m => <option key={m} value={m}>{m}</option>)}
         </select>
       </div>
 
-      <div className="bg-white rounded-[3.5rem] border border-slate-200 shadow-2xl overflow-hidden">
-        <table className="w-full text-left">
-          <thead className="bg-slate-900 text-slate-400">
-            <tr className="text-[10px] font-black uppercase tracking-widest">
-              <th className="px-10 py-8">Location Node</th>
-              <th className="px-10 py-8">Regional Manager</th>
-              <th className="px-10 py-8 text-center bg-red-950/20 text-red-400">GA Daily Goal</th>
-              <th className="px-10 py-8 text-center bg-blue-950/20 text-blue-400">OC Daily Goal</th>
-              <th className="px-10 py-8 text-right">Verification</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {filteredShops.length === 0 ? (
-              <tr><td colSpan="5" className="p-32 text-center text-slate-300 font-black italic uppercase tracking-widest text-sm">No active nodes identified</td></tr>
-            ) : filteredShops.map((shop, idx) => (
-              <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                <td className="px-10 py-8">
-                  <span className="font-black text-slate-900 text-lg tracking-tighter">{shop.name}</span>
-                </td>
-                <td className="px-10 py-8">
-                   <span className="text-[10px] font-black uppercase text-slate-400 bg-slate-50 px-3 py-1.5 rounded-full border border-slate-100 tracking-tighter">{shop.manager}</span>
-                </td>
-                <td className="px-10 py-8 bg-red-50/10">
-                  <div className="flex justify-center">
-                    <input 
-                      type="number" 
-                      className="w-32 bg-white border border-red-100 p-4 rounded-2xl text-center font-black text-red-600 text-xl focus:ring-4 focus:ring-red-500/10 outline-none transition-all"
-                      defaultValue={targets[shop.name]?.ga || 0}
-                      onBlur={(e) => handleInlineSave(shop.name, 'ga', e.target.value)}
-                    />
-                  </div>
-                </td>
-                <td className="px-10 py-8 bg-blue-50/10">
-                  <div className="flex justify-center">
-                    <input 
-                      type="number" 
-                      className="w-32 bg-white border border-blue-100 p-4 rounded-2xl text-center font-black text-blue-600 text-xl focus:ring-4 focus:ring-blue-500/10 outline-none transition-all"
-                      defaultValue={targets[shop.name]?.oc || 0}
-                      onBlur={(e) => handleInlineSave(shop.name, 'oc', e.target.value)}
-                    />
-                  </div>
-                </td>
-                <td className="px-10 py-8 text-right">
-                  <div className="flex justify-end">
-                    <div className="w-10 h-10 rounded-2xl bg-green-50 flex items-center justify-center text-green-500 border border-green-100 shadow-sm">
-                       <Check size={20} />
-                    </div>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {filteredShops.map(shop => (
+          <div key={shop.name} className="bg-white p-6 rounded-[2.5rem] border shadow-sm space-y-4">
+            <div className="flex justify-between items-start">
+              <div>
+                <h4 className="font-black text-lg">{shop.name}</h4>
+                <p className="text-[10px] text-slate-400 uppercase font-black tracking-widest">Mgr: {shop.manager}</p>
+              </div>
+              <button onClick={() => {setEditingShop(shop.name); setEditForm({ga: targets[shop.name]?.ga||0, oc: targets[shop.name]?.oc||0})}} className="text-slate-300 hover:text-red-500 p-2 transition-colors">
+                <Edit3 size={18}/>
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-red-50/50 p-4 rounded-2xl">
+                <p className="text-[9px] font-black text-red-600 uppercase mb-1 tracking-tighter">GA Target</p>
+                {editingShop === shop.name ? 
+                  <input type="number" className="w-full bg-transparent font-black border-b border-red-500 outline-none" value={editForm.ga} onChange={e => setEditForm({...editForm, ga: e.target.value})} /> : 
+                  <span className="text-xl font-black text-red-700">{targets[shop.name]?.ga?.toLocaleString() || 0}</span>
+                }
+              </div>
+              <div className="bg-blue-50/50 p-4 rounded-2xl">
+                <p className="text-[9px] font-black text-blue-600 uppercase mb-1 tracking-tighter">OC Target</p>
+                {editingShop === shop.name ? 
+                  <input type="number" className="w-full bg-transparent font-black border-b border-blue-500 outline-none" value={editForm.oc} onChange={e => setEditForm({...editForm, oc: e.target.value})} /> : 
+                  <span className="text-xl font-black text-blue-700">{targets[shop.name]?.oc?.toLocaleString() || 0}</span>
+                }
+              </div>
+            </div>
+            {editingShop === shop.name && (
+              <div className="flex gap-2">
+                <button onClick={() => handleSave(shop.name)} className="flex-1 bg-red-600 text-white py-3 rounded-xl font-black flex items-center justify-center gap-2 shadow-lg"><Check size={18}/> Save</button>
+                <button onClick={() => setEditingShop(null)} className="bg-slate-100 p-3 rounded-xl"><X size={18} /></button>
+              </div>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -1187,68 +970,64 @@ function UserSearch({ users, db, appId, managers }) {
   };
 
   const handleDeleteUser = async (uid) => {
-    if (!confirm("Terminate this personnel profile from systems?")) return;
+    if (!confirm("Are you sure you want to delete this user profile?")) return;
     await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', uid));
   };
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500">
-      <h2 className="text-4xl font-black uppercase tracking-tighter italic">Personnel Registry</h2>
+    <div className="space-y-6">
+      <h2 className="text-3xl font-black uppercase tracking-tighter">Team Management</h2>
       <div className="relative">
-        <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-300"/>
-        <input type="text" placeholder="Filter by Name / Title..." className="w-full bg-white p-6 pl-16 rounded-[2.5rem] shadow-sm outline-none border focus:ring-4 focus:ring-red-500/5 font-black transition-all" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300"/>
+        <input type="text" placeholder="Search members..." className="w-full bg-white p-4 pl-12 rounded-2xl shadow-sm outline-none border focus:ring-2 focus:ring-red-500/20 font-bold" value={searchTerm} onChange={e => setSearchTerm(searchTerm)} />
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {filtered.map(u => (
-          <div key={u.uid} className={`bg-white p-10 rounded-[4rem] border transition-all duration-300 relative group ${editingId === u.uid ? 'border-red-500 shadow-2xl shadow-red-500/10' : 'border-slate-100 shadow-sm hover:shadow-md'}`}>
-            <div className="flex flex-col items-center gap-6">
-              <div className="w-24 h-24 rounded-[2.5rem] bg-slate-50 flex items-center justify-center font-black text-slate-300 text-4xl uppercase border-4 border-white shadow-lg">{u.username?.charAt(0)}</div>
-              <div className="text-center flex-1 space-y-2">
+          <div key={u.uid} className={`bg-white p-6 rounded-[2.5rem] border shadow-sm flex flex-col gap-4 transition-all ${editingId === u.uid ? 'border-red-500 ring-4 ring-red-500/5' : ''}`}>
+            <div className="flex items-center gap-4">
+              <div className="w-14 h-14 rounded-2xl bg-slate-50 flex items-center justify-center font-black text-slate-400 text-xl uppercase">{u.username?.charAt(0)}</div>
+              <div className="flex-1">
                 {editingId === u.uid ? 
-                  <input className="w-full font-black text-center text-xl border-b-2 border-red-500 outline-none py-1 bg-transparent" value={editForm.username} onChange={e => setEditForm({...editForm, username: e.target.value})} /> : 
-                  <p className="font-black text-slate-900 text-2xl tracking-tighter">{u.username}</p>
+                  <input className="w-full font-black border-b-2 border-red-500 outline-none py-1" value={editForm.username} onChange={e => setEditForm({...editForm, username: e.target.value})} /> : 
+                  <p className="font-black text-slate-800 text-lg">{u.username}</p>
                 }
-                <div className="flex flex-col items-center gap-1">
-                   <span className={`text-[10px] font-black uppercase tracking-[0.3em] ${u.role === 'admin' ? 'text-red-600' : 'text-slate-400'}`}>{u.role.toUpperCase()}</span>
-                   {u.assignedManager && (
-                      <p className="text-[10px] font-bold text-slate-300 uppercase italic">Region: {u.assignedManager}</p>
-                   )}
-                </div>
+                <span className={`text-[10px] font-black uppercase tracking-widest ${u.role === 'admin' ? 'text-purple-600' : 'text-slate-400'}`}>{u.role.toUpperCase()}</span>
+                {u.assignedManager && (
+                   <p className="text-[9px] font-bold text-red-600 italic mt-1 uppercase">Region: {u.assignedManager}</p>
+                )}
               </div>
-              <button onClick={() => handleDeleteUser(u.uid)} className="absolute top-8 right-8 text-slate-200 hover:text-red-500 transition-colors">
-                <Trash2 size={20} />
+              <button onClick={() => handleDeleteUser(u.uid)} className="text-red-300 hover:text-red-500 transition-colors p-2">
+                <Trash2 size={16} />
               </button>
             </div>
-            <div className="mt-8 pt-8 border-t border-slate-50">
-              {editingId === u.uid ? (
-                <div className="space-y-4 pt-2">
-                  <div className="space-y-1">
-                     <label className="text-[9px] font-black uppercase text-slate-400 px-1">Clearance Level</label>
-                     <select className="w-full bg-slate-50 rounded-2xl p-5 text-xs font-bold border-none outline-none" value={editForm.role} onChange={e => setEditForm({...editForm, role: e.target.value})}>
-                       <option value="user">Operational User</option>
-                       <option value="admin">System Administrator</option>
-                     </select>
-                  </div>
-                  <div className="space-y-1">
-                     <label className="text-[9px] font-black uppercase text-slate-400 px-1">Regional Assignment</label>
-                     <select className="w-full bg-slate-50 rounded-2xl p-5 text-xs font-bold border-none outline-none" value={editForm.assignedManager} onChange={e => setEditForm({...editForm, assignedManager: e.target.value})}>
-                       <option value="">No Global Assignment</option>
-                       {managers.map(m => <option key={m} value={m}>{m}</option>)}
-                     </select>
-                  </div>
-                  <div className="flex gap-3">
-                    <button onClick={() => handleUpdate(u.uid)} className="flex-1 bg-red-600 text-white py-5 rounded-2xl shadow-xl shadow-red-600/20 flex justify-center hover:bg-red-700 transition-all">
-                      {updating ? <Loader2 size={20} className="animate-spin" /> : <Save size={20}/>}
-                    </button>
-                    <button onClick={() => setEditingId(null)} className="bg-slate-100 text-slate-400 p-5 rounded-2xl hover:bg-slate-200 transition-all"><X size={20}/></button>
-                  </div>
+            {editingId === u.uid ? (
+              <div className="space-y-3 pt-2">
+                <div className="space-y-1">
+                   <label className="text-[9px] font-black uppercase text-slate-400 px-1">Role</label>
+                   <select className="w-full bg-slate-50 rounded-xl p-3 text-xs font-bold border-none outline-none" value={editForm.role} onChange={e => setEditForm({...editForm, role: e.target.value})}>
+                     <option value="user">USER</option>
+                     <option value="admin">ADMIN</option>
+                   </select>
                 </div>
-              ) : (
-                <button onClick={() => {setEditingId(u.uid); setEditForm({username: u.username, role: u.role, assignedManager: u.assignedManager || ''})}} className="w-full bg-slate-50 text-slate-500 py-5 rounded-2xl font-black text-[11px] uppercase tracking-widest hover:bg-slate-100 transition-all flex items-center justify-center gap-3">
-                  <UserCog size={16} /> Assign Region & Edit
-                </button>
-              )}
-            </div>
+                <div className="space-y-1">
+                   <label className="text-[9px] font-black uppercase text-slate-400 px-1">Assign Region / Manager</label>
+                   <select className="w-full bg-slate-50 rounded-xl p-3 text-xs font-bold border-none outline-none" value={editForm.assignedManager} onChange={e => setEditForm({...editForm, assignedManager: e.target.value})}>
+                     <option value="">No Assignment</option>
+                     {managers.map(m => <option key={m} value={m}>{m}</option>)}
+                   </select>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => handleUpdate(u.uid)} className="flex-1 bg-red-600 text-white p-3 rounded-xl shadow-lg shadow-red-600/20 flex justify-center">
+                    {updating ? <Loader2 size={18} className="animate-spin" /> : <Save size={18}/>}
+                  </button>
+                  <button onClick={() => setEditingId(null)} className="bg-slate-100 text-slate-400 p-3 rounded-xl"><X size={18}/></button>
+                </div>
+              </div>
+            ) : (
+              <button onClick={() => {setEditingId(u.uid); setEditForm({username: u.username, role: u.role, assignedManager: u.assignedManager || ''})}} className="w-full bg-slate-50 text-slate-500 py-3 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-100 transition-all">
+                <UserCog size={14} className="inline mr-2"/> Assign Region & Edit
+              </button>
+            )}
           </div>
         ))}
       </div>
@@ -1292,78 +1071,78 @@ function AdminDashboard({ areaManagers, shops, targets, db, appId }) {
   };
 
   const handleDeleteManager = (name) => {
-    if (!confirm(`Permanently decommission manager "${name}"? Shop links will be dissolved.`)) return;
+    if (!confirm(`Are you sure you want to delete manager "${name}"? This will unassign their shops.`)) return;
     const updatedM = areaManagers.filter(m => m !== name);
     const updatedS = shops.filter(s => s.manager !== name);
     updateConfig(updatedM, updatedS);
   };
 
   const handleDeleteShop = (name) => {
-    if (!confirm(`Permanently dismantle shop node "${name}"?`)) return;
+    if (!confirm(`Are you sure you want to delete shop "${name}"?`)) return;
     const updatedS = shops.filter(s => s.name !== name);
     updateConfig(null, updatedS);
   };
 
   return (
-    <div className="space-y-12 pb-20 animate-in fade-in duration-500">
-      <header><h2 className="text-4xl font-black text-slate-900 tracking-tighter uppercase italic">Infrastructure</h2></header>
+    <div className="space-y-10 pb-20 animate-in fade-in duration-500">
+      <header><h2 className="text-4xl font-black text-slate-800 tracking-tighter uppercase">Structure Management</h2></header>
       
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        <div className="bg-white p-10 rounded-[3.5rem] border border-slate-200 shadow-sm flex flex-col gap-6">
-          <div className="flex items-center gap-4 mb-2"><UserPlus className="text-red-600" size={28} /><h3 className="font-black text-slate-800 tracking-tight uppercase text-lg">Lead Activation</h3></div>
-          <div className="flex gap-3">
-            <input value={newManager} onChange={e => setNewManager(e.target.value)} className="flex-1 bg-slate-50 border border-slate-100 p-5 rounded-2xl font-bold outline-none focus:ring-4 focus:ring-red-500/5 transition-all" placeholder="Enter Full Name" />
-            <button onClick={handleAddManager} className="bg-red-600 text-white px-8 py-5 rounded-2xl font-black shadow-lg shadow-red-600/20 active:scale-95 transition-all">Add</button>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-white p-8 rounded-[2.5rem] border shadow-sm flex flex-col gap-4">
+          <div className="flex items-center gap-3 mb-2"><UserPlus className="text-red-600" size={24} /><h3 className="font-black text-slate-700 tracking-tight uppercase">New Manager</h3></div>
+          <div className="flex gap-2">
+            <input value={newManager} onChange={e => setNewManager(e.target.value)} className="flex-1 bg-slate-50 border-none p-4 rounded-xl font-bold outline-none" placeholder="Manager Name" />
+            <button onClick={handleAddManager} className="bg-red-600 text-white px-6 rounded-xl font-black">Add</button>
           </div>
         </div>
-        <div className="bg-white p-10 rounded-[3.5rem] border border-slate-200 shadow-sm flex flex-col gap-6">
-          <div className="flex items-center gap-4 mb-2"><Store className="text-red-600" size={28} /><h3 className="font-black text-slate-800 tracking-tight uppercase text-lg">Node Deployment</h3></div>
-          <div className="flex gap-3 flex-col sm:flex-row">
-            <input value={newShop} onChange={e => setNewShop(e.target.value)} className="flex-1 bg-slate-50 border border-slate-100 p-5 rounded-2xl font-bold outline-none focus:ring-4 focus:ring-red-500/5 transition-all" placeholder="Location Code" />
-            <select value={assignManager} onChange={e => setAssignManager(e.target.value)} className="bg-slate-50 border border-slate-100 p-5 rounded-2xl font-bold outline-none cursor-pointer">
-              <option value="">Select Manager</option>
+        <div className="bg-white p-8 rounded-[2.5rem] border shadow-sm flex flex-col gap-4">
+          <div className="flex items-center gap-3 mb-2"><Store className="text-red-600" size={24} /><h3 className="font-black text-slate-700 tracking-tight uppercase">New Shop</h3></div>
+          <div className="flex gap-2 flex-col sm:flex-row">
+            <input value={newShop} onChange={e => setNewShop(e.target.value)} className="flex-1 bg-slate-50 border-none p-4 rounded-xl font-bold outline-none" placeholder="Shop Name" />
+            <select value={assignManager} onChange={e => setAssignManager(e.target.value)} className="bg-slate-50 border-none p-4 rounded-xl font-bold outline-none cursor-pointer">
+              <option value="">Choose Manager</option>
               {areaManagers.map(m => <option key={m} value={m}>{m}</option>)}
             </select>
-            <button onClick={() => { if (newShop && assignManager) updateConfig(null, [...shops, {name: newShop, manager: assignManager}]); setNewShop(''); }} className="bg-[#0F172A] text-white px-10 py-5 rounded-2xl font-black shadow-lg active:scale-95 transition-all">Link</button>
+            <button onClick={() => { if (newShop && assignManager) updateConfig(null, [...shops, {name: newShop, manager: assignManager}]); setNewShop(''); }} className="bg-red-600 text-white px-6 py-4 rounded-xl font-black">Link</button>
           </div>
         </div>
       </div>
 
-      <div className="bg-white rounded-[3.5rem] border border-slate-200 shadow-2xl overflow-hidden overflow-x-auto">
+      <div className="bg-white rounded-[2.5rem] border shadow-2xl overflow-hidden overflow-x-auto">
         <table className="w-full text-left">
           <thead className="bg-slate-900 text-slate-400">
             <tr>
-              <th className="px-10 py-8 text-[10px] font-black uppercase tracking-widest">Regional Personnel</th>
-              <th className="px-10 py-8 text-[10px] font-black uppercase tracking-widest">Shop Node</th>
-              <th className="px-10 py-8 text-[10px] font-black uppercase tracking-widest text-right">Operational Actions</th>
+              <th className="px-8 py-5 text-[10px] font-black uppercase tracking-widest">Area Manager</th>
+              <th className="px-8 py-5 text-[10px] font-black uppercase tracking-widest">Shop Location</th>
+              <th className="px-8 py-5 text-[10px] font-black uppercase tracking-widest text-right">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-50">
+          <tbody className="divide-y">
             {shops.length === 0 ? (
-              <tr><td colSpan="3" className="p-32 text-center text-slate-300 font-black italic uppercase tracking-widest text-sm">No active shop nodes identified</td></tr>
+              <tr><td colSpan="3" className="p-20 text-center text-slate-400 font-bold italic">No shops assigned yet.</td></tr>
             ) : shops.map((shop, idx) => (
-              <tr key={idx} className="hover:bg-slate-50/50 transition-colors group">
-                <td className="px-10 py-8">
+              <tr key={idx} className="hover:bg-slate-50 transition-colors">
+                <td className="px-8 py-6">
                   {editingManager === shop.manager ? (
-                    <div className="flex items-center gap-3">
-                      <input className="bg-white border-b-2 border-red-500 font-black outline-none p-2 text-xl tracking-tighter" value={editValue} onChange={e => setEditValue(e.target.value)} />
-                      <button onClick={() => saveEditManager(shop.manager)} className="text-green-500 bg-green-50 p-3 rounded-xl"><Check size={20} /></button>
-                      <button onClick={() => setEditingManager(null)} className="text-slate-300 bg-slate-50 p-3 rounded-xl"><X size={20} /></button>
+                    <div className="flex items-center gap-2">
+                      <input className="bg-slate-50 border-b-2 border-red-500 font-bold outline-none p-1" value={editValue} onChange={e => setEditValue(e.target.value)} />
+                      <button onClick={() => saveEditManager(shop.manager)} className="text-red-500"><Check size={18} /></button>
+                      <button onClick={() => setEditingManager(null)} className="text-slate-300"><X size={18} /></button>
                     </div>
                   ) : (
                     <div className="flex items-center justify-between group">
-                      <span className="font-black text-slate-900 text-2xl tracking-tighter italic">{shop.manager}</span>
+                      <span className="font-black text-slate-800 text-lg tracking-tight">{shop.manager}</span>
                       <div className="opacity-0 group-hover:opacity-100 flex gap-2">
-                        <button onClick={() => handleEditManager(shop.manager)} className="p-3 text-slate-200 hover:text-red-500 transition-all"><Edit3 size={16} /></button>
-                        <button onClick={() => handleDeleteManager(shop.manager)} className="p-3 text-slate-200 hover:text-red-500 transition-all"><Trash2 size={16} /></button>
+                        <button onClick={() => handleEditManager(shop.manager)} className="p-2 text-red-400 hover:text-red-600"><Edit3 size={14} /></button>
+                        <button onClick={() => handleDeleteManager(shop.manager)} className="p-2 text-red-300 hover:text-red-500"><Trash2 size={14} /></button>
                       </div>
                     </div>
                   )}
                 </td>
-                <td className="px-10 py-8 font-black text-slate-500 text-lg tracking-tight">{shop.name}</td>
-                <td className="px-10 py-8 text-right">
-                  <button onClick={() => handleDeleteShop(shop.name)} className="p-4 bg-red-50 text-red-500 rounded-2xl hover:bg-red-500 hover:text-white transition-all shadow-sm">
-                    <Trash2 size={20} />
+                <td className="px-8 py-6 font-bold text-slate-600">{shop.name}</td>
+                <td className="px-8 py-6 text-right">
+                  <button onClick={() => handleDeleteShop(shop.name)} className="p-3 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all shadow-sm">
+                    <Trash2 size={18} />
                   </button>
                 </td>
               </tr>
