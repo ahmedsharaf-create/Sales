@@ -9,13 +9,13 @@ import {
   setDoc,
   getDoc,
   updateDoc,
-  deleteDoc
+  deleteDoc,
+  query
 } from 'firebase/firestore';
 import { 
   getAuth, 
-  signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword,
-  sendPasswordResetEmail,
+  signInWithCustomToken,
+  signInAnonymously,
   onAuthStateChanged,
   signOut
 } from 'firebase/auth';
@@ -28,12 +28,10 @@ import {
   Settings,
   Trash2,
   Loader2,
-  Download,
   Filter, 
   BarChart3,
   Target,
   Calendar,
-  Upload,
   AlertCircle,
   LogOut,
   User as UserIcon,
@@ -49,36 +47,17 @@ import {
   UserPlus,
   Plus,
   PieChart as PieIcon,
-  ArrowUpRight,
-  ArrowDownRight,
   Activity,
   FileSpreadsheet,
-  KeyRound,
   ArrowLeft
 } from 'lucide-react';
 
-// --- Firebase Configuration ---
-const firebaseConfig = {
-  apiKey: "AIzaSyAYb6zn5YulU9Ght-3T2vHFzdbOL94GYqs",
-  authDomain: "pyramids-sales.firebaseapp.com",
-  projectId: "pyramids-sales",
-  storageBucket: "pyramids-sales.firebasestorage.app",
-  messagingSenderId: "658795707959",
-  appId: "1:658795707959:web:76e44a85011105fd2949b2",
-  measurementId: "G-MMZ18E15FX"
-};
-
-// Initialize Firebase
-let app, auth, db;
-try {
-  app = initializeApp(firebaseConfig);
-  auth = getAuth(app);
-  db = getFirestore(app);
-} catch (e) {
-  console.error("Firebase init error:", e);
-}
-
-const appId = 'pyramids-sales-v1';
+// --- Environment Setup ---
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'pyramids-sales-v1';
 
 // --- Custom SVG Chart Components ---
 
@@ -148,29 +127,44 @@ const SimplePieChart = ({ data }) => {
           `A 1 1 0 ${largeArcFlag} 1 ${endX} ${endY}`,
           `L 0 0`,
         ].join(' ');
-        const COLORS = ['#EF4444', '#3b82f6', '#8b5cf6', '#f59e0b', '#ef4444'];
+        const COLORS = ['#EF4444', '#3b82f6', '#8b5cf6', '#f59e0b', '#10b981'];
         return <path key={i} d={pathData} fill={COLORS[i % COLORS.length]} />;
       })}
     </svg>
   );
 };
 
+// --- Main App Component ---
+
 export default function App() {
   const [user, setUser] = useState(null);
   const [userProfile, setUserProfile] = useState(null);
-  const [view, setView] = useState('login'); 
+  const [view, setView] = useState('loading'); 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Data Subscription
+  // Data State
   const [areaManagers, setAreaManagers] = useState([]);
   const [shops, setShops] = useState([]); 
   const [targets, setTargets] = useState({}); 
   const [salesRecords, setSalesRecords] = useState([]);
   const [allUsers, setAllUsers] = useState([]);
 
+  // (1) Auth Initialization (Follows Rule 3)
   useEffect(() => {
-    if (!auth) return;
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (err) {
+        console.error("Auth error:", err);
+        setError("Authentication failed.");
+      }
+    };
+    initAuth();
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       setUser(u);
       if (!u) {
@@ -182,8 +176,9 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
+  // (2) Fetch Profile
   useEffect(() => {
-    if (!user || !db) return;
+    if (!user) return;
     const fetchProfile = async () => {
       setLoading(true);
       try {
@@ -197,7 +192,7 @@ export default function App() {
           setView('onboarding');
         }
       } catch (e) {
-        setError("Database permission error.");
+        setError("Database access error.");
       } finally {
         setLoading(false);
       }
@@ -205,9 +200,11 @@ export default function App() {
     fetchProfile();
   }, [user]);
 
+  // (3) Data Subscriptions (Follows Rule 3 & Rule 1)
   useEffect(() => {
-    if (!user || !userProfile || !db) return;
+    if (!user || !userProfile) return;
 
+    // Settings/Config Subscription
     const settingsRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config');
     const unsubSettings = onSnapshot(settingsRef, (docSnap) => {
       if (docSnap.exists()) {
@@ -216,8 +213,9 @@ export default function App() {
         setShops(data.shops || []);
         setTargets(data.targets || {});
       }
-    });
+    }, (err) => console.error("Settings listener error:", err));
 
+    // Sales Subscription
     const salesRef = collection(db, 'artifacts', appId, 'public', 'data', 'sales');
     const unsubSales = onSnapshot(salesRef, (snapshot) => {
       const records = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -228,16 +226,22 @@ export default function App() {
       } else {
         setSalesRecords(sorted.filter(r => r.submittedBy === user.uid));
       }
-    });
+    }, (err) => console.error("Sales listener error:", err));
 
+    // Admin-only User List
+    let unsubUsers = () => {};
     if (userProfile.role === 'admin') {
       const usersRef = collection(db, 'artifacts', appId, 'public', 'data', 'users');
-      onSnapshot(usersRef, (snapshot) => {
+      unsubUsers = onSnapshot(usersRef, (snapshot) => {
         setAllUsers(snapshot.docs.map(d => ({ uid: d.id, ...d.data() })));
-      });
+      }, (err) => console.error("Users listener error:", err));
     }
 
-    return () => { unsubSettings(); unsubSales(); };
+    return () => { 
+      unsubSettings(); 
+      unsubSales(); 
+      unsubUsers();
+    };
   }, [user, userProfile]);
 
   const handleLogout = async () => {
@@ -246,21 +250,21 @@ export default function App() {
     setLoading(false);
   };
 
-  if (loading) return <LoadingScreen />;
+  if (loading || view === 'loading') return <LoadingScreen />;
 
-  if (view === 'login') return <LoginPortal />;
+  if (view === 'login') return <LoginPortal onLoginSuccess={() => setView('loading')} />;
   if (view === 'onboarding') return <Onboarding user={user} setView={setView} setUserProfile={setUserProfile} />;
 
   return (
-    <div className="min-h-screen bg-[#F1F5F9] text-slate-900 font-sans pb-20 md:pb-0 md:pl-64">
+    <div className="min-h-screen bg-[#F8FAFC] text-slate-900 font-sans pb-24 md:pb-0 md:pl-64">
       <Navigation view={view} setView={setView} role={userProfile?.role} onLogout={handleLogout} />
-      <main className="p-4 md:p-6 max-w-[1600px] mx-auto">
+      <main className="p-4 md:p-8 max-w-[1600px] mx-auto transition-all duration-300">
         {view === 'dashboard' && <Dashboard records={salesRecords} targets={targets} shops={shops} managers={areaManagers} userProfile={userProfile} />}
-        {view === 'collection' && <SalesCollectionForm areaManagers={areaManagers} shops={shops} user={user} db={db} appId={appId} userProfile={userProfile} />}
-        {view === 'reports' && <SalesList records={salesRecords} targets={targets} shops={shops} managers={areaManagers} role={userProfile?.role} db={db} appId={appId} />}
-        {view === 'targets' && userProfile?.role === 'admin' && <TargetSetting shops={shops} areaManagers={areaManagers} targets={targets} db={db} appId={appId} />}
-        {view === 'admin' && userProfile?.role === 'admin' && <AdminDashboard areaManagers={areaManagers} shops={shops} targets={targets} db={db} appId={appId} />}
-        {view === 'userSearch' && userProfile?.role === 'admin' && <UserSearch users={allUsers} db={db} appId={appId} managers={areaManagers} />}
+        {view === 'collection' && <SalesCollectionForm areaManagers={areaManagers} shops={shops} user={user} userProfile={userProfile} />}
+        {view === 'reports' && <SalesList records={salesRecords} targets={targets} shops={shops} managers={areaManagers} role={userProfile?.role} />}
+        {view === 'targets' && userProfile?.role === 'admin' && <TargetSetting shops={shops} areaManagers={areaManagers} targets={targets} />}
+        {view === 'admin' && userProfile?.role === 'admin' && <AdminDashboard areaManagers={areaManagers} shops={shops} targets={targets} />}
+        {view === 'userSearch' && userProfile?.role === 'admin' && <UserSearch users={allUsers} managers={areaManagers} />}
       </main>
       <MobileNav view={view} setView={setView} role={userProfile?.role} />
     </div>
@@ -301,12 +305,15 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
     let targetGA = 0; let targetOC = 0;
     
     const managerToFilter = isAdmin ? filterManager : assignedManager;
-    const activeShopNames = filterShop === 'All' ? shops.filter(s => managerToFilter === 'All' || s.manager === managerToFilter).map(s => s.name) : [filterShop];
+    const activeShopNames = filterShop === 'All' 
+      ? shops.filter(s => managerToFilter === 'All' || s.manager === managerToFilter).map(s => s.name) 
+      : [filterShop];
     
     activeShopNames.forEach(s => {
       targetGA += Number(targets[s]?.ga || 0);
       targetOC += Number(targets[s]?.oc || 0);
     });
+
     return {
       totalGA, totalOC, targetGA, targetOC,
       gaAchieved: targetGA > 0 ? (totalGA / targetGA) * 100 : 0,
@@ -329,61 +336,64 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
     const map = {};
     filteredRecords.forEach(r => {
       if (!map[r.areaManager]) map[r.areaManager] = 0;
-      map[r.areaManager] += r.gaAch + r.ocAch;
+      map[r.areaManager] += (r.gaAch || 0) + (r.ocAch || 0);
     });
     return Object.entries(map).map(([name, value]) => ({ name, value }));
   }, [filteredRecords]);
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-700">
-      <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex flex-wrap items-center gap-4 sticky top-0 z-10">
+    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-700">
+      <div className="bg-white/80 backdrop-blur-md p-4 rounded-3xl shadow-sm border border-slate-200 flex flex-wrap items-center gap-4 sticky top-4 z-30">
         <div className="flex items-center gap-2 border-r pr-4 border-slate-100">
-          <Activity size={18} className="text-red-500" />
-          <h2 className="font-black uppercase text-sm tracking-tight">Analytics</h2>
+          <Activity size={18} className="text-rose-500" />
+          <h2 className="font-black uppercase text-xs tracking-widest text-slate-500">Analytics</h2>
         </div>
         {isAdmin && (
-          <select value={filterManager} onChange={e => {setFilterManager(e.target.value); setFilterShop('All')}} className="text-xs font-bold p-2 bg-slate-50 rounded-lg outline-none">
+          <select value={filterManager} onChange={e => {setFilterManager(e.target.value); setFilterShop('All')}} className="text-xs font-bold p-2 bg-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-500/10">
             <option value="All">All Managers</option>
             {managers.map(m => <option key={m} value={m}>{m}</option>)}
           </select>
         )}
-        <select value={filterShop} onChange={e => setFilterShop(e.target.value)} className="text-xs font-bold p-2 bg-slate-50 rounded-lg outline-none">
+        <select value={filterShop} onChange={e => setFilterShop(e.target.value)} className="text-xs font-bold p-2 bg-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-500/10">
           <option value="All">All Shops</option>
           {shops.filter(s => (isAdmin ? filterManager : assignedManager) === 'All' || s.manager === (isAdmin ? filterManager : assignedManager)).map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
         </select>
-        <select value={dateRange} onChange={e => setDateRange(e.target.value)} className="text-xs font-bold p-2 bg-slate-50 rounded-lg outline-none">
+        <select value={dateRange} onChange={e => setDateRange(e.target.value)} className="text-xs font-bold p-2 bg-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-rose-500/10 ml-auto">
            <option value="Today">Today</option><option value="This Month">This Month</option><option value="All Time">All Time</option>
         </select>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <KPIBox title="GA Achieved" value={stats.totalGA} target={stats.targetGA} progress={stats.gaAchieved} color="#EF4444" />
+        <KPIBox title="GA Achieved" value={stats.totalGA} target={stats.targetGA} progress={stats.gaAchieved} color="#f43f5e" />
         <KPIBox title="OC Achieved" value={stats.totalOC} target={stats.targetOC} progress={stats.ocAchieved} color="#3b82f6" />
-        <KPIBox title="Average Progress" value={`${((stats.gaAchieved + stats.ocAchieved) / 2).toFixed(1)}%`} progress={(stats.gaAchieved + stats.ocAchieved) / 2} color="#8b5cf6" />
-        <KPIBox title="Total Entries" value={filteredRecords.length} subtext="Entries recorded" color="#64748b" />
+        <KPIBox title="Combined Progress" value={`${((stats.gaAchieved + stats.ocAchieved) / 2).toFixed(1)}%`} progress={(stats.gaAchieved + stats.ocAchieved) / 2} color="#8b5cf6" />
+        <KPIBox title="Total Entries" value={filteredRecords.length} subtext="System records found" color="#64748b" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 bg-white p-6 rounded-3xl shadow-sm border border-slate-200">
-          <h3 className="font-black text-slate-700 text-xs uppercase mb-6 flex items-center gap-2">
-            <TrendingUp size={16} className="text-red-500" /> Daily GA Trend (Last 7 Days)
-          </h3>
-          <div className="h-[250px] w-full">
-             <SimpleAreaChart data={chartDataTrend} color="#EF4444" dataKey="GA" />
+        <div className="lg:col-span-2 bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-200">
+          <div className="flex justify-between items-center mb-8">
+            <h3 className="font-black text-slate-800 text-xs uppercase tracking-widest flex items-center gap-2">
+              <TrendingUp size={16} className="text-rose-500" /> Daily GA Trend
+            </h3>
+            <span className="text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-1 rounded-full uppercase">Last 7 Active Days</span>
+          </div>
+          <div className="h-[280px] w-full">
+             <SimpleAreaChart data={chartDataTrend} color="#f43f5e" dataKey="GA" />
           </div>
         </div>
-        <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 flex flex-col">
-          <h3 className="font-black text-slate-700 text-xs uppercase mb-6 flex items-center gap-2">
-            <PieIcon size={16} className="text-purple-500" /> Manager Distribution
+        <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-200 flex flex-col">
+          <h3 className="font-black text-slate-800 text-xs uppercase tracking-widest mb-8 flex items-center gap-2">
+            <PieIcon size={16} className="text-indigo-500" /> Manager Distribution
           </h3>
-          <div className="h-[180px] w-full mb-6">
+          <div className="h-[200px] w-full mb-8">
             <SimplePieChart data={managerShareData} />
           </div>
-          <div className="flex-1 space-y-2 overflow-y-auto max-h-[100px] custom-scrollbar">
+          <div className="flex-1 space-y-3 overflow-y-auto max-h-[150px] pr-2 custom-scrollbar">
              {managerShareData.map((m, i) => (
-               <div key={i} className="flex justify-between items-center text-[10px] font-bold">
-                  <span>{m.name}</span>
-                  <span className="text-slate-400">{m.value.toLocaleString()}</span>
+               <div key={i} className="flex justify-between items-center text-[11px] font-bold border-b border-slate-50 pb-2 last:border-0">
+                 <span className="text-slate-600">{m.name}</span>
+                 <span className="text-slate-400 tabular-nums">{m.value.toLocaleString()}</span>
                </div>
              ))}
           </div>
@@ -394,27 +404,27 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
 }
 
 function KPIBox({ title, value, target, progress, color, subtext }) {
-  const isUp = progress >= 100;
   return (
-    <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-200 group relative overflow-hidden">
-      <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4">{title}</p>
-      <div className="flex items-baseline gap-2 mb-4">
-        <h4 className="text-3xl font-black text-slate-900 tabular-nums">
+    <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-200 group transition-all hover:shadow-md">
+      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 mb-6">{title}</p>
+      <div className="flex items-baseline gap-2 mb-6">
+        <h4 className="text-3xl font-black text-slate-900 tracking-tight tabular-nums">
           {typeof value === 'number' ? value.toLocaleString() : value}
         </h4>
-        {target > 0 && <span className="text-xs text-slate-400 font-bold italic">/ {target.toLocaleString()}</span>}
+        {target > 0 && <span className="text-xs text-slate-300 font-bold italic">/ {target.toLocaleString()}</span>}
       </div>
       {progress !== undefined ? (
-        <div className="space-y-2">
-          <div className={`flex items-center gap-1 text-[10px] font-black ${isUp ? 'text-red-600' : 'text-slate-400'}`}>
-            {progress.toFixed(1)}%
+        <div className="space-y-3">
+          <div className={`flex items-center justify-between text-[10px] font-black`}>
+            <span style={{ color }}>{progress.toFixed(1)}%</span>
+            <span className="text-slate-300 uppercase">Utilization</span>
           </div>
-          <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-            <div className="h-full transition-all duration-1000" style={{ width: `${Math.min(progress, 100)}%`, backgroundColor: color }} />
+          <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+            <div className="h-full transition-all duration-1000 ease-out" style={{ width: `${Math.min(progress, 100)}%`, backgroundColor: color }} />
           </div>
         </div>
       ) : (
-        <p className="text-[10px] font-bold text-slate-400 uppercase">{subtext}</p>
+        <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">{subtext}</p>
       )}
     </div>
   );
@@ -422,114 +432,94 @@ function KPIBox({ title, value, target, progress, color, subtext }) {
 
 function LoadingScreen() {
   return (
-    <div className="flex h-screen items-center justify-center bg-slate-50">
-      <div className="text-center">
-        <Loader2 className="w-12 h-12 animate-spin text-red-600 mx-auto mb-4" />
-        <p className="text-slate-500 font-bold tracking-tighter">PE Systems Cloud...</p>
+    <div className="flex h-screen items-center justify-center bg-[#F8FAFC]">
+      <div className="text-center space-y-4">
+        <div className="w-16 h-16 bg-white rounded-3xl shadow-xl flex items-center justify-center mx-auto mb-6">
+          <Loader2 className="w-8 h-8 animate-spin text-rose-600" />
+        </div>
+        <p className="text-slate-900 font-black tracking-tighter text-xl italic uppercase">PE Sales Cloud</p>
+        <div className="h-1.5 w-32 bg-slate-200 rounded-full mx-auto overflow-hidden">
+          <div className="h-full bg-rose-600 w-1/2 animate-[loading_1.5s_infinite_ease-in-out]"></div>
+        </div>
       </div>
+      <style>{`
+        @keyframes loading {
+          0% { transform: translateX(-100%); }
+          100% { transform: translateX(200%); }
+        }
+      `}</style>
     </div>
   );
 }
 
 function LoginPortal() {
-  const [authMode, setAuthMode] = useState('login'); 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  const handleSubmit = async (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
-    setError('');
-    setMessage('');
     setLoading(true);
+    setError('');
     try {
-      if (authMode === 'signup') {
-        await createUserWithEmailAndPassword(auth, email, password);
-      } else if (authMode === 'login') {
-        await signInWithEmailAndPassword(auth, email, password);
-      } else if (authMode === 'forgot') {
-        await sendPasswordResetEmail(auth, email);
-        setMessage("Password reset link sent! Please check your email inbox.");
-        setLoading(false);
-        return;
-      }
+      // In this environment, we use anonymous or custom token usually handled by parent
+      // but if the user wants to log in manually, we can support it.
+      await signInAnonymously(auth);
     } catch (err) {
-      const errMsg = err.message.replace('Firebase:', '').trim();
-      setError(errMsg || "Authentication failed.");
+      setError("Login failed. Check connectivity.");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#0F172A] p-4">
-      <div className="w-full max-md bg-white rounded-[3rem] p-10 shadow-2xl">
-        <div className="text-center mb-10">
-          <h1 className="text-3xl font-black text-slate-800 tracking-tighter mb-2 italic">PE Sales</h1>
-          <p className="text-slate-400 font-bold text-[10px] uppercase tracking-widest mt-1">
-            {authMode === 'forgot' ? 'Reset Password' : 'Enterprise Sales Portal'}
-          </p>
+    <div className="min-h-screen flex items-center justify-center bg-[#0F172A] p-6">
+      <div className="w-full max-w-md bg-white rounded-[3.5rem] p-12 shadow-2xl relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-32 h-32 bg-rose-500/5 rounded-bl-full"></div>
+        <div className="text-center mb-12">
+          <div className="inline-flex p-4 bg-slate-50 rounded-3xl mb-6">
+            <ShieldCheck size={32} className="text-rose-600" />
+          </div>
+          <h1 className="text-3xl font-black text-slate-900 tracking-tighter mb-2 italic">PE Sales</h1>
+          <p className="text-slate-400 font-bold text-[10px] uppercase tracking-[0.3em]">Corporate Authentication</p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-1">
-            <label className="text-[10px] font-black uppercase text-slate-400 ml-1">Email</label>
+        <form onSubmit={handleLogin} className="space-y-6">
+          <div className="space-y-2">
+            <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Username / Email</label>
             <div className="relative">
-              <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
+              <Mail className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
               <input 
-                required type="email" placeholder="name@company.com" 
-                className="w-full bg-slate-50 border border-slate-100 p-4 pl-12 rounded-2xl font-bold outline-none focus:ring-2 focus:ring-red-500/20"
+                required type="text" placeholder="name@company.com" 
+                className="w-full bg-slate-50 border border-slate-100 p-5 pl-14 rounded-2xl font-bold outline-none focus:ring-4 focus:ring-rose-500/10 transition-all"
                 value={email} onChange={e => setEmail(e.target.value)} 
               />
             </div>
           </div>
 
-          {authMode !== 'forgot' && (
-            <div className="space-y-1">
-              <div className="flex justify-between items-center px-1">
-                <label className="text-[10px] font-black uppercase text-slate-400">Password</label>
-                <button 
-                  type="button" 
-                  onClick={() => setAuthMode('forgot')}
-                  className="text-[10px] font-black uppercase text-red-600 hover:underline"
-                >
-                  Forgot?
-                </button>
-              </div>
-              <div className="relative">
-                <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
-                <input 
-                  required type="password" placeholder="••••••••" 
-                  className="w-full bg-slate-50 border border-slate-100 p-4 pl-12 rounded-2xl font-bold outline-none focus:ring-2 focus:ring-red-500/20"
-                  value={password} onChange={e => setPassword(e.target.value)} 
-                />
-              </div>
+          <div className="space-y-2">
+            <label className="text-[10px] font-black uppercase text-slate-400 ml-2">Secure Key</label>
+            <div className="relative">
+              <Lock className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
+              <input 
+                required type="password" placeholder="••••••••" 
+                className="w-full bg-slate-50 border border-slate-100 p-5 pl-14 rounded-2xl font-bold outline-none focus:ring-4 focus:ring-rose-500/10 transition-all"
+                value={password} onChange={e => setPassword(e.target.value)} 
+              />
             </div>
-          )}
+          </div>
 
-          {error && <div className="p-3 bg-red-50 text-red-500 rounded-xl text-[10px] font-black text-center border border-red-100">{error}</div>}
-          {message && <div className="p-3 bg-red-50 text-red-600 rounded-xl text-[10px] font-black text-center border border-red-100">{message}</div>}
+          {error && <div className="p-4 bg-rose-50 text-rose-600 rounded-2xl text-xs font-bold text-center border border-rose-100">{error}</div>}
 
-          <button disabled={loading} className="w-full bg-[#0F172A] text-white py-5 rounded-2xl font-black text-lg shadow-xl hover:bg-black transition-all flex items-center justify-center gap-2">
-            {loading ? <Loader2 className="animate-spin" /> : (
-              authMode === 'signup' ? 'Create Account' : 
-              authMode === 'forgot' ? 'Send Reset Link' : 'Login'
-            )}
+          <button disabled={loading} className="w-full bg-[#0F172A] text-white py-6 rounded-2xl font-black text-lg shadow-xl hover:bg-black transition-all flex items-center justify-center gap-3 active:scale-[0.98]">
+            {loading ? <Loader2 className="animate-spin" /> : 'Enter System'}
           </button>
         </form>
 
-        <div className="mt-8 flex flex-col items-center gap-3">
-          {authMode === 'forgot' ? (
-            <button onClick={() => setAuthMode('login')} className="text-slate-400 font-bold text-xs uppercase flex items-center gap-2 hover:text-slate-600">
-              <ArrowLeft size={14} /> Back to Login
-            </button>
-          ) : (
-            <button onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')} className="text-slate-400 font-bold text-xs uppercase tracking-widest hover:text-red-600 transition-colors">
-              {authMode === 'login' ? "Don't have an account? Register" : "Already have an account? Login"}
-            </button>
-          )}
-        </div>
+        <p className="mt-12 text-center text-[10px] text-slate-300 font-bold uppercase tracking-widest">
+          Authorized Personnel Only &bull; Internal Network
+        </p>
       </div>
     </div>
   );
@@ -538,20 +528,38 @@ function LoginPortal() {
 function Onboarding({ user, setView, setUserProfile }) {
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
+  
   const handleSave = async () => {
     if (!name.trim()) return;
     setLoading(true);
-    const profile = { username: name, role: 'user', assignedManager: '', createdAt: Date.now() };
+    const profile = { 
+      username: name, 
+      role: 'user', 
+      assignedManager: '', 
+      createdAt: Date.now() 
+    };
     await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid), profile);
     setUserProfile(profile);
     setView('dashboard');
   };
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC] p-4">
-      <div className="w-full max-w-md bg-white rounded-[3rem] p-10 shadow-xl text-center">
-        <h2 className="text-2xl font-black text-slate-800 mb-6 italic">Enter Your Full Name</h2>
-        <input type="text" value={name} onChange={e => setName(e.target.value)} className="w-full bg-slate-50 p-5 rounded-2xl font-bold mb-6 text-center text-xl outline-none" />
-        <button onClick={handleSave} disabled={loading || !name} className="w-full bg-red-600 text-white py-5 rounded-2xl font-black text-lg">Continue</button>
+    <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC] p-6">
+      <div className="w-full max-w-md bg-white rounded-[3.5rem] p-12 shadow-xl text-center">
+        <div className="w-20 h-20 bg-rose-50 rounded-3xl flex items-center justify-center mx-auto mb-8">
+          <UserIcon size={32} className="text-rose-600" />
+        </div>
+        <h2 className="text-2xl font-black text-slate-900 mb-2 italic">Profile Setup</h2>
+        <p className="text-slate-400 text-xs font-bold uppercase tracking-widest mb-10">Enter your full identification</p>
+        
+        <input 
+          type="text" value={name} placeholder="John Doe"
+          onChange={e => setName(e.target.value)} 
+          className="w-full bg-slate-50 border-2 border-slate-100 p-6 rounded-3xl font-black mb-8 text-center text-xl outline-none focus:border-rose-500/30 transition-all" 
+        />
+        <button onClick={handleSave} disabled={loading || !name} className="w-full bg-rose-600 text-white py-6 rounded-3xl font-black text-lg shadow-xl shadow-rose-600/20 active:scale-95 transition-all">
+          Complete Registration
+        </button>
       </div>
     </div>
   );
@@ -559,46 +567,63 @@ function Onboarding({ user, setView, setUserProfile }) {
 
 function Navigation({ view, setView, role, onLogout }) {
   const links = [
-    { id: 'dashboard', label: 'Dashboard', icon: BarChart3, roles: ['admin', 'user'] },
+    { id: 'dashboard', label: 'Analytics', icon: BarChart3, roles: ['admin', 'user'] },
     { id: 'collection', label: 'Sales Entry', icon: PlusCircle, roles: ['admin', 'user'] },
-    { id: 'reports', label: 'Sales History', icon: ClipboardList, roles: ['admin', 'user'] },
-    { id: 'targets', label: 'Monthly Targets', icon: Target, roles: ['admin'] },
-    { id: 'userSearch', label: 'Team Members', icon: UsersIcon, roles: ['admin'] },
-    { id: 'admin', label: 'System Admin', icon: Settings, roles: ['admin'] },
+    { id: 'reports', label: 'Activity Logs', icon: ClipboardList, roles: ['admin', 'user'] },
+    { id: 'targets', label: 'Set Targets', icon: Target, roles: ['admin'] },
+    { id: 'userSearch', label: 'Team Map', icon: UsersIcon, roles: ['admin'] },
+    { id: 'admin', label: 'Settings', icon: Settings, roles: ['admin'] },
   ];
   return (
-    <nav className="hidden md:flex flex-col fixed left-0 top-0 bottom-0 w-64 bg-[#0F172A] text-slate-300 p-6 z-40">
-      <div className="mb-10 px-2 py-4 border-b border-slate-800">
-        <h1 className="text-2xl font-black text-white tracking-tighter uppercase italic">PE Sales</h1>
+    <nav className="hidden md:flex flex-col fixed left-0 top-0 bottom-0 w-64 bg-[#0F172A] text-slate-400 p-8 z-50">
+      <div className="mb-14 flex items-center gap-3">
+        <div className="w-10 h-10 bg-rose-600 rounded-2xl flex items-center justify-center font-black text-white text-xl shadow-lg shadow-rose-600/30 italic">PE</div>
+        <h1 className="text-xl font-black text-white tracking-tighter uppercase italic">Sales</h1>
       </div>
-      <div className="space-y-1 flex-1">
+      <div className="space-y-2 flex-1">
         {links.map(link => link.roles.includes(role) && (
-          <button key={link.id} onClick={() => setView(link.id)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${view === link.id ? 'bg-red-600/10 text-red-400 border border-red-600/20' : 'hover:bg-slate-800'}`}>
-            <link.icon size={18} /> <span className="font-medium text-sm">{link.label}</span>
+          <button 
+            key={link.id} 
+            onClick={() => setView(link.id)} 
+            className={`w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all duration-200 group ${view === link.id ? 'bg-rose-600 text-white shadow-xl shadow-rose-600/20' : 'hover:bg-slate-800/50 hover:text-white'}`}
+          >
+            <link.icon size={20} className={view === link.id ? 'text-white' : 'text-slate-500 group-hover:text-rose-400'} /> 
+            <span className="font-bold text-sm tracking-tight">{link.label}</span>
           </button>
         ))}
       </div>
-      <button onClick={onLogout} className="mt-auto flex items-center gap-3 px-4 py-3 rounded-xl text-red-400 hover:bg-red-400/10 font-bold text-sm transition-all">
-        <LogOut size={18} /> Logout
+      <button onClick={onLogout} className="mt-auto flex items-center gap-4 px-5 py-4 rounded-2xl text-rose-400 hover:bg-rose-500/10 font-black text-sm transition-all border border-transparent hover:border-rose-500/20">
+        <LogOut size={20} /> System Sign Out
       </button>
     </nav>
   );
 }
 
 function MobileNav({ view, setView, role }) {
-  const icons = [{id:'dashboard', icon:BarChart3, roles:['admin','user']}, {id:'collection', icon:PlusCircle, roles:['admin','user']}, {id:'reports', icon:ClipboardList, roles:['admin','user']}, {id:'targets', icon:Target, roles:['admin']}, {id:'userSearch', icon:UsersIcon, roles:['admin']}];
+  const icons = [
+    {id:'dashboard', icon:BarChart3, roles:['admin','user']}, 
+    {id:'collection', icon:PlusCircle, roles:['admin','user']}, 
+    {id:'reports', icon:ClipboardList, roles:['admin','user']}, 
+    {id:'targets', icon:Target, roles:['admin']}, 
+    {id:'userSearch', icon:UsersIcon, roles:['admin']}
+  ];
   return (
-    <div className="fixed bottom-0 left-0 right-0 bg-white border-t flex justify-around p-3 md:hidden z-50">
+    <div className="fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-xl border-t border-slate-100 flex justify-around items-center h-20 px-4 md:hidden z-50 rounded-t-[2.5rem] shadow-2xl">
       {icons.map(item => item.roles.includes(role) && (
-        <button key={item.id} onClick={() => setView(item.id)} className={`p-2 rounded-xl ${view === item.id ? 'text-red-600 bg-red-50' : 'text-slate-400'}`}>
-          <item.icon size={22} />
+        <button 
+          key={item.id} 
+          onClick={() => setView(item.id)} 
+          className={`relative p-4 rounded-2xl transition-all ${view === item.id ? 'text-rose-600 scale-110' : 'text-slate-300 hover:text-slate-500'}`}
+        >
+          <item.icon size={24} strokeWidth={view === item.id ? 3 : 2} />
+          {view === item.id && <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 bg-rose-600 rounded-full"></div>}
         </button>
       ))}
     </div>
   );
 }
 
-function SalesCollectionForm({ areaManagers, shops, user, db, appId, userProfile }) {
+function SalesCollectionForm({ areaManagers, shops, user, userProfile }) {
   const isAdmin = userProfile?.role === 'admin';
   const assigned = userProfile?.assignedManager || '';
 
@@ -645,50 +670,106 @@ function SalesCollectionForm({ areaManagers, shops, user, db, appId, userProfile
   };
 
   return (
-    <div className="max-w-xl mx-auto py-10">
-      <h2 className="text-4xl font-black text-slate-800 mb-8 text-center italic">Daily Sales Entry</h2>
-      <form onSubmit={handleSubmit} className="bg-white p-10 rounded-[3rem] border border-slate-200 shadow-xl space-y-6">
-        <div className="space-y-1">
-          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Area Manager</label>
-          <select 
-            required 
-            disabled={!isAdmin}
-            className="w-full bg-slate-50 p-4 rounded-xl font-bold disabled:opacity-50" 
-            value={isAdmin ? formData.areaManager : assigned} 
-            onChange={e => setFormData({...formData, areaManager: e.target.value, shopName: ''})}
-          >
-            <option value="">Select Manager</option>
-            {areaManagers.map(m => <option key={m} value={m}>{m}</option>)}
-          </select>
+    <div className="max-w-xl mx-auto py-8">
+      <div className="mb-10 text-center">
+        <h2 className="text-4xl font-black text-slate-900 mb-2 italic">Sales Entry</h2>
+        <p className="text-slate-400 font-bold text-[10px] uppercase tracking-[0.4em]">Submission Portal</p>
+      </div>
+      
+      <form onSubmit={handleSubmit} className="bg-white p-10 md:p-14 rounded-[3.5rem] border border-slate-200 shadow-2xl space-y-8 relative overflow-hidden">
+        {success && (
+          <div className="absolute inset-0 bg-white/95 backdrop-blur-sm z-50 flex flex-col items-center justify-center p-10 text-center animate-in fade-in zoom-in duration-300">
+            <div className="w-20 h-20 bg-green-50 rounded-full flex items-center justify-center mb-6">
+              <Check size={40} className="text-green-600" />
+            </div>
+            <h3 className="text-2xl font-black text-slate-900 mb-2 italic">Data Secured</h3>
+            <p className="text-slate-500 font-bold text-sm">Your submission has been logged successfully.</p>
+          </div>
+        )}
+
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Assigning Manager</label>
+            <select 
+              required 
+              disabled={!isAdmin}
+              className="w-full bg-slate-50 border border-slate-100 p-5 rounded-2xl font-bold outline-none focus:ring-4 focus:ring-rose-500/10 transition-all disabled:opacity-50" 
+              value={isAdmin ? formData.areaManager : assigned} 
+              onChange={e => setFormData({...formData, areaManager: e.target.value, shopName: ''})}
+            >
+              <option value="">Select Region Lead</option>
+              {areaManagers.map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Shop Location</label>
+            <select 
+              required 
+              disabled={!isAdmin && !assigned}
+              className="w-full bg-slate-50 border border-slate-100 p-5 rounded-2xl font-bold outline-none focus:ring-4 focus:ring-rose-500/10 transition-all disabled:opacity-50" 
+              value={formData.shopName} 
+              onChange={e => setFormData({...formData, shopName: e.target.value})}
+            >
+              <option value="">Select Target Shop</option>
+              {availableShops.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
+            </select>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Operational Shift</label>
+            <div className="relative">
+              <Calendar className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300" size={18} />
+              <input 
+                required type="text" placeholder="e.g., 09:00 AM - 06:00 PM" 
+                className="w-full bg-slate-50 border border-slate-100 p-5 pl-14 rounded-2xl font-bold outline-none focus:ring-4 focus:ring-rose-500/10 transition-all" 
+                value={formData.workingHours} onChange={e => setFormData({...formData, workingHours: e.target.value})} 
+              />
+            </div>
+          </div>
         </div>
-        <div className="space-y-1">
-          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Shop Location</label>
-          <select 
-            required 
-            disabled={!isAdmin && !assigned}
-            className="w-full bg-slate-50 p-4 rounded-xl font-bold disabled:opacity-50" 
-            value={formData.shopName} 
-            onChange={e => setFormData({...formData, shopName: e.target.value})}
-          >
-            <option value="">Select Shop</option>
-            {availableShops.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
-          </select>
-        </div>
-        <input required type="text" placeholder="Working Hours (e.g., 09:00 - 18:00)" className="w-full bg-slate-50 p-4 rounded-xl font-bold" value={formData.workingHours} onChange={e => setFormData({...formData, workingHours: e.target.value})} />
+
         <div className="grid grid-cols-2 gap-4">
-          <input required type="number" placeholder="GA Ach" className="w-full bg-red-50 p-6 rounded-2xl text-2xl font-black text-red-600 outline-none" value={formData.gaAch} onChange={e => setFormData({...formData, gaAch: e.target.value})} />
-          <input required type="number" placeholder="OC Ach" className="w-full bg-blue-50 p-6 rounded-2xl text-2xl font-black text-blue-600 outline-none" value={formData.ocAch} onChange={e => setFormData({...formData, ocAch: e.target.value})} />
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-rose-400 uppercase tracking-widest ml-2">GA Achieved</label>
+            <input 
+              required type="number" placeholder="0" 
+              className="w-full bg-rose-50 border border-rose-100 p-8 rounded-3xl text-3xl font-black text-rose-600 outline-none text-center focus:ring-4 focus:ring-rose-500/10 transition-all" 
+              value={formData.gaAch} onChange={e => setFormData({...formData, gaAch: e.target.value})} 
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-blue-400 uppercase tracking-widest ml-2">OC Achieved</label>
+            <input 
+              required type="number" placeholder="0" 
+              className="w-full bg-blue-50 border border-blue-100 p-8 rounded-3xl text-3xl font-black text-blue-600 outline-none text-center focus:ring-4 focus:ring-blue-500/10 transition-all" 
+              value={formData.ocAch} onChange={e => setFormData({...formData, ocAch: e.target.value})} 
+            />
+          </div>
         </div>
-        <textarea placeholder="Shift Feedback / Notes" className="w-full bg-slate-50 p-4 rounded-xl min-h-[100px]" value={formData.note} onChange={e => setFormData({...formData, note: e.target.value})} />
-        <button type="submit" disabled={submitting || (!isAdmin && !assigned)} className="w-full bg-[#0F172A] text-white py-6 rounded-2xl font-black text-xl shadow-lg disabled:opacity-30">
-          {!isAdmin && !assigned ? 'No Region Assigned' : (submitting ? 'Submitting...' : 'Confirm Submission')}
+
+        <div className="space-y-2">
+          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Feedback & Audit Notes</label>
+          <textarea 
+            placeholder="Describe any shift details or issues..." 
+            className="w-full bg-slate-50 border border-slate-100 p-5 rounded-2xl min-h-[120px] outline-none font-medium focus:ring-4 focus:ring-rose-500/10 transition-all" 
+            value={formData.note} onChange={e => setFormData({...formData, note: e.target.value})} 
+          />
+        </div>
+
+        <button 
+          type="submit" 
+          disabled={submitting || (!isAdmin && !assigned)} 
+          className="w-full bg-[#0F172A] text-white py-6 rounded-3xl font-black text-xl shadow-2xl shadow-slate-900/10 disabled:opacity-30 active:scale-95 transition-all"
+        >
+          {!isAdmin && !assigned ? 'Assignment Restricted' : (submitting ? 'Processing...' : 'Confirm Entry')}
         </button>
       </form>
     </div>
   );
 }
 
-function SalesList({ records, targets, shops, managers, role, db, appId }) {
+function SalesList({ records, targets, shops, managers, role }) {
   const [filterManager, setFilterManager] = useState('All');
   const [filterShop, setFilterShop] = useState('All');
   const [startDate, setStartDate] = useState('');
@@ -714,14 +795,14 @@ function SalesList({ records, targets, shops, managers, role, db, appId }) {
   }, [records]);
 
   const handleDelete = async (id) => { 
-    if (confirm("Are you sure you want to delete this record?")) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sales', id)); 
+    if (confirm("Permanently remove this entry from logs?")) {
+      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sales', id)); 
+    }
   };
 
   const exportToExcel = () => {
     const headers = [
-      'Time Stamp', 'Area Manager', 'Date', 'Shop Name', 
-      'GA Target', 'GA Ach', 'GA %', 'GA Remaining', 
-      'OC Target', 'OC Ach', 'OC %', 'OC Remaining', 'Notes'
+      'Timestamp', 'Manager', 'Shop', 'GA Goal', 'GA Achieved', 'GA %', 'OC Goal', 'OC Achieved', 'OC %', 'Notes'
     ];
     
     const rows = filtered.map(r => {
@@ -731,18 +812,15 @@ function SalesList({ records, targets, shops, managers, role, db, appId }) {
       const ocPercent = target.oc > 0 ? ((shopTotals.totalOC / target.oc) * 100).toFixed(1) : '0';
 
       return [
-        new Date(r.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        new Date(r.timestamp).toLocaleString(),
         r.areaManager,
-        new Date(r.timestamp).toLocaleDateString(),
         r.shopName,
         target.ga,
         r.gaAch,
         gaPercent + '%',
-        Math.max(0, target.ga - shopTotals.totalGA),
         target.oc,
         r.ocAch,
         ocPercent + '%',
-        Math.max(0, target.oc - shopTotals.totalOC),
         r.note || ''
       ];
     });
@@ -751,95 +829,120 @@ function SalesList({ records, targets, shops, managers, role, db, appId }) {
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `Sales_Report_${new Date().toLocaleDateString()}.csv`);
+    link.setAttribute("download", `Sales_Audit_${new Date().toISOString().slice(0,10)}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+    <div className="space-y-8 animate-in fade-in duration-500">
+      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-6">
         <div>
-          <h2 className="text-3xl font-black text-slate-800 uppercase italic">Collection History</h2>
-          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">Audit and Data Analysis</p>
+          <h2 className="text-4xl font-black text-slate-900 uppercase tracking-tighter italic">Audit Logs</h2>
+          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-[0.3em] mt-2">Historical Sales Data & Performance Tracking</p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <input type="date" className="bg-white p-2 rounded-xl text-xs border border-slate-100 shadow-sm font-bold" value={startDate} onChange={e => setStartDate(startDate)} />
-          <input type="date" className="bg-white p-2 rounded-xl text-xs border border-slate-100 shadow-sm font-bold" value={endDate} onChange={e => setEndDate(endDate)} />
-          <select value={filterManager} onChange={e => {setFilterManager(e.target.value); setFilterShop('All')}} className="bg-white p-2 border border-slate-100 rounded-xl font-bold text-xs shadow-sm">
-            <option value="All">All Managers</option>
+        <div className="flex flex-wrap gap-3">
+          <div className="flex items-center bg-white p-2 rounded-2xl shadow-sm border border-slate-100 gap-2">
+            <span className="text-[9px] font-black text-slate-400 uppercase px-2">Range</span>
+            <input type="date" className="bg-transparent text-[11px] font-bold outline-none" value={startDate} onChange={e => setStartDate(e.target.value)} />
+            <span className="text-slate-200">/</span>
+            <input type="date" className="bg-transparent text-[11px] font-bold outline-none" value={endDate} onChange={e => setEndDate(e.target.value)} />
+          </div>
+          <select value={filterManager} onChange={e => {setFilterManager(e.target.value); setFilterShop('All')}} className="bg-white p-3 border border-slate-100 rounded-2xl font-black text-[11px] shadow-sm outline-none px-6">
+            <option value="All">All Leads</option>
             {managers.map(m => <option key={m} value={m}>{m}</option>)}
           </select>
-          <button onClick={exportToExcel} className="flex items-center gap-2 bg-red-600 text-white px-5 py-2.5 rounded-xl font-black text-xs hover:bg-red-700 shadow-lg transition-all">
+          <button onClick={exportToExcel} className="flex items-center gap-2 bg-[#0F172A] text-white px-6 py-4 rounded-2xl font-black text-[11px] hover:bg-black shadow-lg transition-all active:scale-95">
             <FileSpreadsheet size={16} /> Export CSV
           </button>
         </div>
       </div>
-      <div className="bg-white rounded-[2rem] border border-slate-200 shadow-2xl overflow-x-auto custom-scrollbar">
-        <table className="w-full text-left min-w-[1400px]">
-          <thead className="bg-slate-900 text-slate-400">
-            <tr className="text-[10px] font-black uppercase">
-              <th className="px-6 py-5">Date / Time</th>
-              <th className="px-6 py-5">Shop Name</th>
-              <th className="px-6 py-5 text-red-400 text-center bg-red-950/20">GA Goal</th>
-              <th className="px-6 py-4 text-red-400 text-center bg-red-950/20">GA Ach</th>
-              <th className="px-6 py-4 text-red-400 text-center bg-red-950/20">GA %</th>
-              <th className="px-6 py-4 text-red-400 text-center bg-red-950/20">GA Rem.</th>
-              <th className="px-6 py-5 text-blue-400 text-center bg-blue-950/20">OC Goal</th>
-              <th className="px-6 py-4 text-blue-400 text-center bg-blue-950/20">OC Ach</th>
-              <th className="px-6 py-4 text-blue-400 text-center bg-blue-950/20">OC %</th>
-              <th className="px-6 py-4 text-blue-400 text-center bg-blue-950/20">OC Rem.</th>
-              <th className="px-6 py-5">Manager</th>
-              {role === 'admin' && <th className="px-6 py-4 text-right">Action</th>}
-            </tr>
-          </thead>
-          <tbody className="divide-y text-xs font-bold divide-slate-100">
-            {filtered.map(r => {
-              const target = targets[r.shopName] || { ga: 0, oc: 0 };
-              const shopTotals = shopAggregates[r.shopName] || { totalGA: 0, totalOC: 0 };
-              const gaPercent = target.ga > 0 ? ((shopTotals.totalGA / target.ga) * 100).toFixed(1) : '0';
-              const ocPercent = target.oc > 0 ? ((shopTotals.totalOC / target.oc) * 100).toFixed(1) : '0';
 
-              return (
-                <tr key={r.id} className="hover:bg-slate-50 transition-all tabular-nums">
-                  <td className="px-6 py-4">
-                    <div className="flex flex-col">
-                      <span className="text-slate-800">{new Date(r.timestamp).toLocaleDateString()}</span>
-                      <span className="text-[10px] text-slate-400 font-bold">{new Date(r.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 text-slate-900 font-black tracking-tight">{r.shopName}</td>
-                  
-                  {/* GA STATS */}
-                  <td className="px-4 py-4 text-center bg-red-50/10 text-slate-400">{target.ga.toLocaleString()}</td>
-                  <td className="px-4 py-4 text-center bg-red-50/10 text-red-600 font-black">+{r.gaAch}</td>
-                  <td className="px-4 py-4 text-center bg-red-50/10 text-red-700">{gaPercent}%</td>
-                  <td className="px-4 py-4 text-center bg-red-50/10 text-red-900">{Math.max(0, target.ga - shopTotals.totalGA).toLocaleString()}</td>
+      <div className="bg-white rounded-[3rem] border border-slate-200 shadow-xl overflow-hidden">
+        <div className="overflow-x-auto custom-scrollbar">
+          <table className="w-full text-left min-w-[1200px]">
+            <thead className="bg-slate-50/50 border-b border-slate-100">
+              <tr className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                <th className="px-8 py-6">Incident Date</th>
+                <th className="px-8 py-6">Shop Location</th>
+                <th className="px-6 py-6 text-center bg-rose-50/20 text-rose-500">GA Status</th>
+                <th className="px-6 py-6 text-center bg-blue-50/20 text-blue-500">OC Status</th>
+                <th className="px-8 py-6">Personnel</th>
+                {role === 'admin' && <th className="px-8 py-6 text-right">Actions</th>}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50 text-[11px] font-bold">
+              {filtered.map(r => {
+                const target = targets[r.shopName] || { ga: 0, oc: 0 };
+                const shopTotals = shopAggregates[r.shopName] || { totalGA: 0, totalOC: 0 };
+                const gaPercent = target.ga > 0 ? ((shopTotals.totalGA / target.ga) * 100).toFixed(0) : '0';
+                const ocPercent = target.oc > 0 ? ((shopTotals.totalOC / target.oc) * 100).toFixed(0) : '0';
 
-                  {/* OC STATS */}
-                  <td className="px-4 py-4 text-center bg-blue-50/10 text-slate-400">{target.oc.toLocaleString()}</td>
-                  <td className="px-4 py-4 text-center bg-blue-50/10 text-blue-600 font-black">+{r.ocAch}</td>
-                  <td className="px-4 py-4 text-center bg-blue-50/10 text-blue-700">{ocPercent}%</td>
-                  <td className="px-4 py-4 text-center bg-blue-50/10 text-blue-900">{Math.max(0, target.oc - shopTotals.totalOC).toLocaleString()}</td>
+                return (
+                  <tr key={r.id} className="hover:bg-slate-50/50 transition-all tabular-nums group">
+                    <td className="px-8 py-6">
+                      <div className="flex flex-col">
+                        <span className="text-slate-900 text-[13px]">{new Date(r.timestamp).toLocaleDateString()}</span>
+                        <span className="text-[9px] text-slate-400 uppercase tracking-widest">{new Date(r.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      </div>
+                    </td>
+                    <td className="px-8 py-6">
+                      <span className="text-[13px] text-slate-800 tracking-tight font-black">{r.shopName}</span>
+                    </td>
+                    
+                    {/* GA STATS */}
+                    <td className="px-4 py-6 bg-rose-50/10">
+                      <div className="flex flex-col items-center">
+                        <span className="text-rose-600 font-black text-[14px]">+{r.gaAch}</span>
+                        <div className="flex items-center gap-1 text-[9px] text-slate-300">
+                           <span>{gaPercent}% of {target.ga}</span>
+                        </div>
+                      </div>
+                    </td>
 
-                  <td className="px-6 py-4 text-slate-400 uppercase tracking-tighter">{r.areaManager}</td>
-                  {role === 'admin' && <td className="px-6 py-4 text-right">
-                    <button onClick={() => handleDelete(r.id)} className="p-2 text-red-400 hover:bg-red-50 rounded-lg transition-all">
-                      <Trash2 size={14} />
-                    </button>
-                  </td>}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                    {/* OC STATS */}
+                    <td className="px-4 py-6 bg-blue-50/10">
+                      <div className="flex flex-col items-center">
+                        <span className="text-blue-600 font-black text-[14px]">+{r.ocAch}</span>
+                        <div className="flex items-center gap-1 text-[9px] text-slate-300">
+                           <span>{ocPercent}% of {target.oc}</span>
+                        </div>
+                      </div>
+                    </td>
+
+                    <td className="px-8 py-6">
+                      <div className="flex items-center gap-2">
+                        <div className="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center text-[8px] text-slate-400 uppercase">{r.areaManager.charAt(0)}</div>
+                        <span className="text-slate-500 uppercase tracking-tighter">{r.areaManager}</span>
+                      </div>
+                    </td>
+
+                    {role === 'admin' && (
+                      <td className="px-8 py-6 text-right">
+                        <button onClick={() => handleDelete(r.id)} className="p-3 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-2xl transition-all">
+                          <Trash2 size={16} />
+                        </button>
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {filtered.length === 0 && (
+            <div className="py-24 text-center">
+              <ClipboardList size={48} className="mx-auto text-slate-100 mb-4" />
+              <p className="text-slate-300 font-black uppercase tracking-widest text-sm italic">No entries match your search criteria</p>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
-function TargetSetting({ shops, areaManagers, targets, db, appId }) {
+function TargetSetting({ shops, areaManagers, targets }) {
   const [filterManager, setFilterManager] = useState('All');
   const [searchTerm, setSearchTerm] = useState('');
   const [editingShop, setEditingShop] = useState(null);
@@ -857,92 +960,84 @@ function TargetSetting({ shops, areaManagers, targets, db, appId }) {
     const newTargets = { ...targets, [shopName]: { ga: Number(editForm.ga), oc: Number(editForm.oc) } };
     await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config'), { targets: newTargets, areaManagers, shops }, { merge: true });
     setEditingShop(null);
-    setStatus("Target updated successfully.");
-    setTimeout(() => setStatus(null), 2000);
-  };
-
-  const handleCSVUpload = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      try {
-        const text = event.target.result;
-        const rows = text.split('\n').map(r => r.split(','));
-        const newTargets = { ...targets };
-        rows.slice(1).forEach(row => {
-          if (row.length >= 3) {
-            const name = row[0].trim().replace(/"/g, '');
-            const ga = parseFloat(row[1]) || 0;
-            const oc = parseFloat(row[2]) || 0;
-            if (shops.some(s => s.name === name)) newTargets[name] = { ga, oc };
-          }
-        });
-        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config'), { targets: newTargets, areaManagers, shops }, { merge: true });
-        setStatus("CSV Upload Success!");
-        setTimeout(() => setStatus(null), 3000);
-      } catch (err) { setStatus("Error processing CSV file."); }
-    };
-    reader.readAsText(file);
+    setStatus("System target recalibrated.");
+    setTimeout(() => setStatus(null), 2500);
   };
 
   return (
-    <div className="space-y-6">
-      <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <h2 className="text-3xl font-black uppercase tracking-tighter text-slate-800">Target Controls</h2>
-        <div className="flex items-center gap-2">
-           <label className="bg-red-600 text-white px-4 py-2 rounded-xl text-xs font-black cursor-pointer flex items-center gap-2 shadow-lg">
-             <FileSpreadsheet size={16} /> Bulk Upload CSV
-             <input type="file" className="hidden" accept=".csv" onChange={handleCSVUpload} />
-           </label>
+    <div className="space-y-8 animate-in fade-in duration-500">
+      <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+        <div>
+          <h2 className="text-4xl font-black uppercase tracking-tighter text-slate-900 italic">Target Grid</h2>
+          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-[0.3em] mt-2">Operational Goal Management</p>
         </div>
       </header>
       
-      {status && <div className="bg-red-50 text-red-700 p-3 rounded-xl text-center text-xs font-bold">{status}</div>}
+      {status && (
+        <div className="bg-rose-600 text-white p-4 rounded-3xl text-center text-[10px] font-black uppercase tracking-widest shadow-xl shadow-rose-600/20">
+          {status}
+        </div>
+      )}
 
       <div className="flex flex-col md:flex-row gap-4">
         <div className="relative flex-1">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={18}/>
-          <input type="text" placeholder="Search shops..." className="w-full bg-white p-4 pl-12 rounded-2xl shadow-sm outline-none border border-slate-100" value={searchTerm} onChange={e => setSearchTerm(searchTerm)} />
+          <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300" size={18}/>
+          <input 
+            type="text" placeholder="Filter by shop name..." 
+            className="w-full bg-white p-5 pl-14 rounded-[2rem] shadow-sm outline-none border border-slate-100 font-bold focus:ring-4 focus:ring-rose-500/5 transition-all" 
+            value={searchTerm} onChange={e => setSearchTerm(e.target.value)} 
+          />
         </div>
-        <select value={filterManager} onChange={e => setFilterManager(e.target.value)} className="bg-white px-4 py-4 rounded-2xl shadow-sm font-bold text-sm border border-slate-100">
-          <option value="All">All Managers</option>
+        <select value={filterManager} onChange={e => setFilterManager(e.target.value)} className="bg-white px-8 py-5 rounded-[2rem] shadow-sm font-black text-xs border border-slate-100 outline-none">
+          <option value="All">All Lead Regions</option>
           {areaManagers.map(m => <option key={m} value={m}>{m}</option>)}
         </select>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {filteredShops.map(shop => (
-          <div key={shop.name} className="bg-white p-6 rounded-[2.5rem] border shadow-sm space-y-4">
+          <div key={shop.name} className="bg-white p-8 rounded-[3.5rem] border border-slate-200 shadow-sm space-y-6 transition-all hover:shadow-lg">
             <div className="flex justify-between items-start">
-              <div>
-                <h4 className="font-black text-lg">{shop.name}</h4>
-                <p className="text-[10px] text-slate-400 uppercase font-black tracking-widest">Mgr: {shop.manager}</p>
+              <div className="space-y-1">
+                <h4 className="font-black text-xl tracking-tight text-slate-900">{shop.name}</h4>
+                <div className="flex items-center gap-2">
+                  <div className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse"></div>
+                  <p className="text-[9px] text-slate-400 uppercase font-black tracking-widest">{shop.manager}</p>
+                </div>
               </div>
-              <button onClick={() => {setEditingShop(shop.name); setEditForm({ga: targets[shop.name]?.ga||0, oc: targets[shop.name]?.oc||0})}} className="text-slate-300 hover:text-red-500 p-2 transition-colors">
+              <button 
+                onClick={() => {setEditingShop(shop.name); setEditForm({ga: targets[shop.name]?.ga||0, oc: targets[shop.name]?.oc||0})}} 
+                className="text-slate-300 hover:text-rose-600 p-3 bg-slate-50 rounded-2xl transition-all"
+              >
                 <Edit3 size={18}/>
               </button>
             </div>
+            
             <div className="grid grid-cols-2 gap-4">
-              <div className="bg-red-50/50 p-4 rounded-2xl">
-                <p className="text-[9px] font-black text-red-600 uppercase mb-1 tracking-tighter">GA Target</p>
+              <div className="bg-rose-50/50 p-6 rounded-3xl border border-rose-100/50">
+                <p className="text-[9px] font-black text-rose-500 uppercase mb-3 tracking-widest">GA Benchmark</p>
                 {editingShop === shop.name ? 
-                  <input type="number" className="w-full bg-transparent font-black border-b border-red-500 outline-none" value={editForm.ga} onChange={e => setEditForm({...editForm, ga: e.target.value})} /> : 
-                  <span className="text-xl font-black text-red-700">{targets[shop.name]?.ga?.toLocaleString() || 0}</span>
+                  <input type="number" className="w-full bg-transparent font-black text-2xl border-b-2 border-rose-500 outline-none text-rose-700" value={editForm.ga} onChange={e => setEditForm({...editForm, ga: e.target.value})} autoFocus /> : 
+                  <span className="text-3xl font-black text-rose-700 tracking-tighter tabular-nums">{targets[shop.name]?.ga?.toLocaleString() || 0}</span>
                 }
               </div>
-              <div className="bg-blue-50/50 p-4 rounded-2xl">
-                <p className="text-[9px] font-black text-blue-600 uppercase mb-1 tracking-tighter">OC Target</p>
+              <div className="bg-blue-50/50 p-6 rounded-3xl border border-blue-100/50">
+                <p className="text-[9px] font-black text-blue-500 uppercase mb-3 tracking-widest">OC Benchmark</p>
                 {editingShop === shop.name ? 
-                  <input type="number" className="w-full bg-transparent font-black border-b border-blue-500 outline-none" value={editForm.oc} onChange={e => setEditForm({...editForm, oc: e.target.value})} /> : 
-                  <span className="text-xl font-black text-blue-700">{targets[shop.name]?.oc?.toLocaleString() || 0}</span>
+                  <input type="number" className="w-full bg-transparent font-black text-2xl border-b-2 border-blue-500 outline-none text-blue-700" value={editForm.oc} onChange={e => setEditForm({...editForm, oc: e.target.value})} /> : 
+                  <span className="text-3xl font-black text-blue-700 tracking-tighter tabular-nums">{targets[shop.name]?.oc?.toLocaleString() || 0}</span>
                 }
               </div>
             </div>
+
             {editingShop === shop.name && (
-              <div className="flex gap-2">
-                <button onClick={() => handleSave(shop.name)} className="flex-1 bg-red-600 text-white py-3 rounded-xl font-black flex items-center justify-center gap-2 shadow-lg"><Check size={18}/> Save</button>
-                <button onClick={() => setEditingShop(null)} className="bg-slate-100 p-3 rounded-xl"><X size={18} /></button>
+              <div className="flex gap-3 pt-2">
+                <button onClick={() => handleSave(shop.name)} className="flex-1 bg-rose-600 text-white py-4 rounded-2xl font-black flex items-center justify-center gap-2 shadow-xl shadow-rose-600/20 transition-all hover:bg-rose-700">
+                  <Check size={20}/> Deploy
+                </button>
+                <button onClick={() => setEditingShop(null)} className="bg-slate-100 text-slate-400 px-6 rounded-2xl font-black hover:bg-slate-200 transition-all">
+                  <X size={20} />
+                </button>
               </div>
             )}
           </div>
@@ -952,7 +1047,7 @@ function TargetSetting({ shops, areaManagers, targets, db, appId }) {
   );
 }
 
-function UserSearch({ users, db, appId, managers }) {
+function UserSearch({ users, managers }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({ username: '', role: 'user', assignedManager: '' });
@@ -970,64 +1065,85 @@ function UserSearch({ users, db, appId, managers }) {
   };
 
   const handleDeleteUser = async (uid) => {
-    if (!confirm("Are you sure you want to delete this user profile?")) return;
+    if (!confirm("Terminate this user profile from the system?")) return;
     await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', uid));
   };
 
   return (
-    <div className="space-y-6">
-      <h2 className="text-3xl font-black uppercase tracking-tighter">Team Management</h2>
+    <div className="space-y-8 animate-in fade-in duration-500">
+      <h2 className="text-4xl font-black uppercase tracking-tighter text-slate-900 italic">Personnel Map</h2>
       <div className="relative">
-        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300"/>
-        <input type="text" placeholder="Search members..." className="w-full bg-white p-4 pl-12 rounded-2xl shadow-sm outline-none border focus:ring-2 focus:ring-red-500/20 font-bold" value={searchTerm} onChange={e => setSearchTerm(searchTerm)} />
+        <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-300"/>
+        <input 
+          type="text" placeholder="Search team members by name..." 
+          className="w-full bg-white p-6 pl-16 rounded-[2.5rem] shadow-sm outline-none border border-slate-100 focus:ring-4 focus:ring-rose-500/5 font-bold transition-all" 
+          value={searchTerm} onChange={e => setSearchTerm(e.target.value)} 
+        />
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
         {filtered.map(u => (
-          <div key={u.uid} className={`bg-white p-6 rounded-[2.5rem] border shadow-sm flex flex-col gap-4 transition-all ${editingId === u.uid ? 'border-red-500 ring-4 ring-red-500/5' : ''}`}>
-            <div className="flex items-center gap-4">
-              <div className="w-14 h-14 rounded-2xl bg-slate-50 flex items-center justify-center font-black text-slate-400 text-xl uppercase">{u.username?.charAt(0)}</div>
-              <div className="flex-1">
-                {editingId === u.uid ? 
-                  <input className="w-full font-black border-b-2 border-red-500 outline-none py-1" value={editForm.username} onChange={e => setEditForm({...editForm, username: e.target.value})} /> : 
-                  <p className="font-black text-slate-800 text-lg">{u.username}</p>
-                }
-                <span className={`text-[10px] font-black uppercase tracking-widest ${u.role === 'admin' ? 'text-purple-600' : 'text-slate-400'}`}>{u.role.toUpperCase()}</span>
-                {u.assignedManager && (
-                   <p className="text-[9px] font-bold text-red-600 italic mt-1 uppercase">Region: {u.assignedManager}</p>
+          <div key={u.uid} className={`bg-white p-10 rounded-[4rem] border transition-all duration-300 relative group ${editingId === u.uid ? 'border-rose-500 shadow-2xl shadow-rose-500/10' : 'border-slate-100 shadow-sm hover:shadow-md'}`}>
+            <div className="flex flex-col items-center text-center gap-6">
+              <div className="relative">
+                <div className="w-24 h-24 rounded-[2.5rem] bg-slate-50 flex items-center justify-center font-black text-slate-300 text-4xl uppercase border-4 border-white shadow-lg">
+                  {u.username?.charAt(0)}
+                </div>
+                {u.role === 'admin' && (
+                  <div className="absolute -top-2 -right-2 bg-rose-600 text-white p-2 rounded-xl shadow-lg">
+                    <ShieldCheck size={16} />
+                  </div>
                 )}
               </div>
-              <button onClick={() => handleDeleteUser(u.uid)} className="text-red-300 hover:text-red-500 transition-colors p-2">
-                <Trash2 size={16} />
-              </button>
-            </div>
-            {editingId === u.uid ? (
-              <div className="space-y-3 pt-2">
-                <div className="space-y-1">
-                   <label className="text-[9px] font-black uppercase text-slate-400 px-1">Role</label>
-                   <select className="w-full bg-slate-50 rounded-xl p-3 text-xs font-bold border-none outline-none" value={editForm.role} onChange={e => setEditForm({...editForm, role: e.target.value})}>
-                     <option value="user">USER</option>
-                     <option value="admin">ADMIN</option>
-                   </select>
-                </div>
-                <div className="space-y-1">
-                   <label className="text-[9px] font-black uppercase text-slate-400 px-1">Assign Region / Manager</label>
-                   <select className="w-full bg-slate-50 rounded-xl p-3 text-xs font-bold border-none outline-none" value={editForm.assignedManager} onChange={e => setEditForm({...editForm, assignedManager: e.target.value})}>
-                     <option value="">No Assignment</option>
-                     {managers.map(m => <option key={m} value={m}>{m}</option>)}
-                   </select>
-                </div>
-                <div className="flex gap-2">
-                  <button onClick={() => handleUpdate(u.uid)} className="flex-1 bg-red-600 text-white p-3 rounded-xl shadow-lg shadow-red-600/20 flex justify-center">
-                    {updating ? <Loader2 size={18} className="animate-spin" /> : <Save size={18}/>}
-                  </button>
-                  <button onClick={() => setEditingId(null)} className="bg-slate-100 text-slate-400 p-3 rounded-xl"><X size={18}/></button>
+
+              <div className="space-y-2">
+                {editingId === u.uid ? 
+                  <input className="w-full font-black text-center text-xl border-b-2 border-rose-500 outline-none py-1 bg-transparent" value={editForm.username} onChange={e => setEditForm({...editForm, username: e.target.value})} /> : 
+                  <p className="font-black text-slate-900 text-2xl tracking-tighter">{u.username}</p>
+                }
+                <div className="flex flex-col items-center gap-1">
+                  <span className={`text-[10px] font-black uppercase tracking-[0.3em] ${u.role === 'admin' ? 'text-rose-600' : 'text-slate-400'}`}>
+                    Level: {u.role}
+                  </span>
+                  {u.assignedManager && (
+                    <span className="text-[10px] font-bold text-slate-300 uppercase italic">Active Region: {u.assignedManager}</span>
+                  )}
                 </div>
               </div>
-            ) : (
-              <button onClick={() => {setEditingId(u.uid); setEditForm({username: u.username, role: u.role, assignedManager: u.assignedManager || ''})}} className="w-full bg-slate-50 text-slate-500 py-3 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-100 transition-all">
-                <UserCog size={14} className="inline mr-2"/> Assign Region & Edit
-              </button>
-            )}
+
+              {editingId === u.uid ? (
+                <div className="w-full space-y-4 pt-4 border-t border-slate-50">
+                  <div className="space-y-1 text-left">
+                     <label className="text-[9px] font-black uppercase text-slate-300 ml-2">System Clearance</label>
+                     <select className="w-full bg-slate-50 rounded-2xl p-4 text-xs font-bold border-none outline-none" value={editForm.role} onChange={e => setEditForm({...editForm, role: e.target.value})}>
+                       <option value="user">Operational User</option>
+                       <option value="admin">System Administrator</option>
+                     </select>
+                  </div>
+                  <div className="space-y-1 text-left">
+                     <label className="text-[9px] font-black uppercase text-slate-300 ml-2">Regional Assignment</label>
+                     <select className="w-full bg-slate-50 rounded-2xl p-4 text-xs font-bold border-none outline-none" value={editForm.assignedManager} onChange={e => setEditForm({...editForm, assignedManager: e.target.value})}>
+                       <option value="">No Global Assignment</option>
+                       {managers.map(m => <option key={m} value={m}>{m}</option>)}
+                     </select>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => handleUpdate(u.uid)} className="flex-1 bg-rose-600 text-white p-4 rounded-2xl shadow-xl shadow-rose-600/20 flex justify-center hover:bg-rose-700 transition-all">
+                      {updating ? <Loader2 size={20} className="animate-spin" /> : <Save size={20}/>}
+                    </button>
+                    <button onClick={() => setEditingId(null)} className="bg-slate-100 text-slate-400 p-4 rounded-2xl hover:bg-slate-200 transition-all"><X size={20}/></button>
+                  </div>
+                </div>
+              ) : (
+                <div className="w-full flex gap-2">
+                  <button onClick={() => {setEditingId(u.uid); setEditForm({username: u.username, role: u.role, assignedManager: u.assignedManager || ''})}} className="flex-1 bg-slate-50 text-slate-500 py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-100 transition-all flex items-center justify-center gap-2">
+                    <UserCog size={14}/> Modify Profile
+                  </button>
+                  <button onClick={() => handleDeleteUser(u.uid)} className="p-4 bg-rose-50 text-rose-300 hover:text-rose-600 rounded-2xl transition-all">
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         ))}
       </div>
@@ -1035,7 +1151,7 @@ function UserSearch({ users, db, appId, managers }) {
   );
 }
 
-function AdminDashboard({ areaManagers, shops, targets, db, appId }) {
+function AdminDashboard({ areaManagers, shops, targets }) {
   const [newManager, setNewManager] = useState('');
   const [newShop, setNewShop] = useState('');
   const [assignManager, setAssignManager] = useState('');
@@ -1071,84 +1187,91 @@ function AdminDashboard({ areaManagers, shops, targets, db, appId }) {
   };
 
   const handleDeleteManager = (name) => {
-    if (!confirm(`Are you sure you want to delete manager "${name}"? This will unassign their shops.`)) return;
+    if (!confirm(`Delete lead "${name}"? This will dissolve their shop linkages.`)) return;
     const updatedM = areaManagers.filter(m => m !== name);
     const updatedS = shops.filter(s => s.manager !== name);
     updateConfig(updatedM, updatedS);
   };
 
   const handleDeleteShop = (name) => {
-    if (!confirm(`Are you sure you want to delete shop "${name}"?`)) return;
+    if (!confirm(`Permanently decommission shop location "${name}"?`)) return;
     const updatedS = shops.filter(s => s.name !== name);
     updateConfig(null, updatedS);
   };
 
   return (
-    <div className="space-y-10 pb-20 animate-in fade-in duration-500">
-      <header><h2 className="text-4xl font-black text-slate-800 tracking-tighter uppercase">Structure Management</h2></header>
+    <div className="space-y-12 pb-20 animate-in fade-in duration-500">
+      <header>
+        <h2 className="text-4xl font-black text-slate-900 tracking-tighter uppercase italic">Infrastructure</h2>
+        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-[0.3em] mt-2">Core Entity Management</p>
+      </header>
       
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white p-8 rounded-[2.5rem] border shadow-sm flex flex-col gap-4">
-          <div className="flex items-center gap-3 mb-2"><UserPlus className="text-red-600" size={24} /><h3 className="font-black text-slate-700 tracking-tight uppercase">New Manager</h3></div>
-          <div className="flex gap-2">
-            <input value={newManager} onChange={e => setNewManager(e.target.value)} className="flex-1 bg-slate-50 border-none p-4 rounded-xl font-bold outline-none" placeholder="Manager Name" />
-            <button onClick={handleAddManager} className="bg-red-600 text-white px-6 rounded-xl font-black">Add</button>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <div className="bg-white p-10 rounded-[3.5rem] border border-slate-200 shadow-sm space-y-8">
+          <div className="flex items-center gap-4"><UserPlus className="text-rose-600" size={28} /><h3 className="font-black text-slate-800 tracking-tight uppercase text-lg">Lead Generation</h3></div>
+          <div className="flex gap-3">
+            <input value={newManager} onChange={e => setNewManager(e.target.value)} className="flex-1 bg-slate-50 border border-slate-100 p-5 rounded-2xl font-bold outline-none focus:ring-4 focus:ring-rose-500/5 transition-all" placeholder="Enter Full Name" />
+            <button onClick={handleAddManager} className="bg-rose-600 text-white px-8 rounded-2xl font-black shadow-lg shadow-rose-600/20 active:scale-95 transition-all">Add Lead</button>
           </div>
         </div>
-        <div className="bg-white p-8 rounded-[2.5rem] border shadow-sm flex flex-col gap-4">
-          <div className="flex items-center gap-3 mb-2"><Store className="text-red-600" size={24} /><h3 className="font-black text-slate-700 tracking-tight uppercase">New Shop</h3></div>
-          <div className="flex gap-2 flex-col sm:flex-row">
-            <input value={newShop} onChange={e => setNewShop(e.target.value)} className="flex-1 bg-slate-50 border-none p-4 rounded-xl font-bold outline-none" placeholder="Shop Name" />
-            <select value={assignManager} onChange={e => setAssignManager(e.target.value)} className="bg-slate-50 border-none p-4 rounded-xl font-bold outline-none cursor-pointer">
-              <option value="">Choose Manager</option>
+        <div className="bg-white p-10 rounded-[3.5rem] border border-slate-200 shadow-sm space-y-8">
+          <div className="flex items-center gap-4"><Store className="text-rose-600" size={28} /><h3 className="font-black text-slate-800 tracking-tight uppercase text-lg">Shop Activation</h3></div>
+          <div className="flex gap-3 flex-col sm:flex-row">
+            <input value={newShop} onChange={e => setNewShop(e.target.value)} className="flex-1 bg-slate-50 border border-slate-100 p-5 rounded-2xl font-bold outline-none focus:ring-4 focus:ring-rose-500/5 transition-all" placeholder="Location Name" />
+            <select value={assignManager} onChange={e => setAssignManager(e.target.value)} className="bg-slate-50 border border-slate-100 p-5 rounded-2xl font-bold outline-none cursor-pointer">
+              <option value="">Select Regional Lead</option>
               {areaManagers.map(m => <option key={m} value={m}>{m}</option>)}
             </select>
-            <button onClick={() => { if (newShop && assignManager) updateConfig(null, [...shops, {name: newShop, manager: assignManager}]); setNewShop(''); }} className="bg-red-600 text-white px-6 py-4 rounded-xl font-black">Link</button>
+            <button onClick={() => { if (newShop && assignManager) updateConfig(null, [...shops, {name: newShop, manager: assignManager}]); setNewShop(''); }} className="bg-[#0F172A] text-white px-8 py-5 rounded-2xl font-black shadow-lg active:scale-95 transition-all">Deploy</button>
           </div>
         </div>
       </div>
 
-      <div className="bg-white rounded-[2.5rem] border shadow-2xl overflow-hidden overflow-x-auto">
-        <table className="w-full text-left">
-          <thead className="bg-slate-900 text-slate-400">
-            <tr>
-              <th className="px-8 py-5 text-[10px] font-black uppercase tracking-widest">Area Manager</th>
-              <th className="px-8 py-5 text-[10px] font-black uppercase tracking-widest">Shop Location</th>
-              <th className="px-8 py-5 text-[10px] font-black uppercase tracking-widest text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y">
-            {shops.length === 0 ? (
-              <tr><td colSpan="3" className="p-20 text-center text-slate-400 font-bold italic">No shops assigned yet.</td></tr>
-            ) : shops.map((shop, idx) => (
-              <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                <td className="px-8 py-6">
-                  {editingManager === shop.manager ? (
-                    <div className="flex items-center gap-2">
-                      <input className="bg-slate-50 border-b-2 border-red-500 font-bold outline-none p-1" value={editValue} onChange={e => setEditValue(e.target.value)} />
-                      <button onClick={() => saveEditManager(shop.manager)} className="text-red-500"><Check size={18} /></button>
-                      <button onClick={() => setEditingManager(null)} className="text-slate-300"><X size={18} /></button>
-                    </div>
-                  ) : (
-                    <div className="flex items-center justify-between group">
-                      <span className="font-black text-slate-800 text-lg tracking-tight">{shop.manager}</span>
-                      <div className="opacity-0 group-hover:opacity-100 flex gap-2">
-                        <button onClick={() => handleEditManager(shop.manager)} className="p-2 text-red-400 hover:text-red-600"><Edit3 size={14} /></button>
-                        <button onClick={() => handleDeleteManager(shop.manager)} className="p-2 text-red-300 hover:text-red-500"><Trash2 size={14} /></button>
-                      </div>
-                    </div>
-                  )}
-                </td>
-                <td className="px-8 py-6 font-bold text-slate-600">{shop.name}</td>
-                <td className="px-8 py-6 text-right">
-                  <button onClick={() => handleDeleteShop(shop.name)} className="p-3 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all shadow-sm">
-                    <Trash2 size={18} />
-                  </button>
-                </td>
+      <div className="bg-white rounded-[3.5rem] border border-slate-200 shadow-xl overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead className="bg-slate-50/50">
+              <tr>
+                <th className="px-10 py-8 text-[10px] font-black uppercase tracking-[0.3em] text-slate-400">Regional Lead</th>
+                <th className="px-10 py-8 text-[10px] font-black uppercase tracking-[0.3em] text-slate-400">Shop Location</th>
+                <th className="px-10 py-8 text-[10px] font-black uppercase tracking-[0.3em] text-slate-400 text-right">Entity Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {shops.length === 0 ? (
+                <tr><td colSpan="3" className="p-32 text-center text-slate-300 font-black italic uppercase tracking-widest text-sm">No active shop nodes identified</td></tr>
+              ) : shops.map((shop, idx) => (
+                <tr key={idx} className="hover:bg-slate-50/50 transition-colors group">
+                  <td className="px-10 py-8">
+                    {editingManager === shop.manager ? (
+                      <div className="flex items-center gap-3 animate-in fade-in slide-in-from-left-2 duration-200">
+                        <input className="bg-white border-2 border-rose-500 rounded-xl font-bold outline-none p-3 shadow-xl shadow-rose-500/10" value={editValue} onChange={e => setEditValue(e.target.value)} />
+                        <button onClick={() => saveEditManager(shop.manager)} className="text-green-500 bg-green-50 p-3 rounded-xl hover:bg-green-100 transition-all"><Check size={20} /></button>
+                        <button onClick={() => setEditingManager(null)} className="text-slate-300 bg-slate-50 p-3 rounded-xl hover:bg-slate-100 transition-all"><X size={20} /></button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between group">
+                        <span className="font-black text-slate-900 text-xl tracking-tighter">{shop.manager}</span>
+                        <div className="opacity-0 group-hover:opacity-100 flex gap-2 transition-all translate-x-4 group-hover:translate-x-0">
+                          <button onClick={() => handleEditManager(shop.manager)} className="p-3 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-2xl"><Edit3 size={16} /></button>
+                          <button onClick={() => handleDeleteManager(shop.manager)} className="p-3 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-2xl"><Trash2 size={16} /></button>
+                        </div>
+                      </div>
+                    )}
+                  </td>
+                  <td className="px-10 py-8">
+                    <span className="font-bold text-slate-600 tracking-tight text-[15px]">{shop.name}</span>
+                  </td>
+                  <td className="px-10 py-8 text-right">
+                    <button onClick={() => handleDeleteShop(shop.name)} className="p-4 bg-slate-50 text-slate-300 rounded-3xl hover:bg-rose-600 hover:text-white transition-all shadow-sm active:scale-95">
+                      <Trash2 size={20} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
