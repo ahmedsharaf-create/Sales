@@ -205,7 +205,6 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
 
   const managerSummary = useMemo(() => {
     const summary = {};
-    // Only show assigned manager for normal users, or all for admins
     const activeManagers = isAdmin ? managers : managers.filter(m => m === assignedManager);
 
     activeManagers.forEach(m => {
@@ -306,20 +305,12 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 no-print">
         <div className="flex items-center gap-3">
           <div className="p-3 bg-red-600 rounded-2xl shadow-lg shadow-red-200"><LayoutDashboard className="text-white" size={24} /></div>
-          <div>
-            <h2 className="text-2xl font-black text-slate-800 tracking-tight italic">
-              {isAdmin ? "Performance Hub" : "Your Performance"}
-            </h2>
-          </div>
+          <div><h2 className="text-2xl font-black text-slate-800 tracking-tight italic">{isAdmin ? "Performance Hub" : "Your Performance"}</h2></div>
         </div>
         {isAdmin && (
            <div className="flex items-center gap-2">
              <span className="text-[10px] font-black uppercase text-slate-400">View Region:</span>
-             <select 
-               value={filterManager} 
-               onChange={e => setFilterManager(e.target.value)} 
-               className="text-xs font-black uppercase tracking-widest p-3 bg-white border border-slate-100 rounded-xl shadow-sm outline-none cursor-pointer"
-             >
+             <select value={filterManager} onChange={e => setFilterManager(e.target.value)} className="text-xs font-black uppercase tracking-widest p-3 bg-white border border-slate-100 rounded-xl shadow-sm outline-none cursor-pointer">
                <option value="All">All Regions</option>
                {managers.map(m => <option key={m} value={m}>{m}</option>)}
              </select>
@@ -363,16 +354,10 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
       <div className="bg-white rounded-[2.5rem] shadow-sm border border-slate-100 overflow-hidden">
         <div className="p-8 border-b border-slate-50 space-y-6">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-            <h3 className="font-black text-slate-800 text-lg tracking-tight">
-              {isAdmin ? "Manager Performance Summary" : "Regional Performance Summary"}
-            </h3>
+            <h3 className="font-black text-slate-800 text-lg tracking-tight">{isAdmin ? "Manager Performance Summary" : "Regional Performance Summary"}</h3>
             <div className="flex items-center gap-2 no-print">
-              <button onClick={exportSummaryExcel} className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-600 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-emerald-100 transition-all">
-                <FileSpreadsheet size={16} /> Export Excel
-              </button>
-              <button onClick={() => window.print()} className="flex items-center gap-2 px-4 py-2 bg-slate-50 text-slate-600 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-100 transition-all">
-                <FileText size={16} /> Save PDF
-              </button>
+              <button onClick={exportSummaryExcel} className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-600 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-emerald-100 transition-all"><FileSpreadsheet size={16} /> Export Excel</button>
+              <button onClick={() => window.print()} className="flex items-center gap-2 px-4 py-2 bg-slate-50 text-slate-600 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-100 transition-all"><FileText size={16} /> Save PDF</button>
             </div>
           </div>
           {isAdmin && (
@@ -442,7 +427,7 @@ function SalesCollectionForm({ areaManagers, shops, user, db, appId, userProfile
         areaManager: isAdmin ? formData.areaManager : assigned, 
         gaAch: Number(formData.gaAch), 
         ocAch: Number(formData.ocAch), 
-        workingHours: Number(formData.workingHours), // Stored as Number for easy AVG
+        workingHours: Number(formData.workingHours), 
         timestamp: Date.now(), 
         submittedBy: user.uid 
       }); 
@@ -507,27 +492,14 @@ function SalesList({ records, targets, shops, managers, role, db, appId, userPro
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <h2 className="text-3xl font-black text-slate-800 italic uppercase">Audit Trail</h2>
         <div className="flex flex-wrap gap-2 w-full md:w-auto">
-          <input 
-            type="date" 
-            className="bg-white p-3 rounded-xl text-xs font-black shadow-sm outline-none flex-1 md:flex-none" 
-            value={startDate} 
-            onChange={e => setStartDate(e.target.value)} 
-          />
+          <input type="date" className="bg-white p-3 rounded-xl text-xs font-black shadow-sm outline-none flex-1 md:flex-none" value={startDate} onChange={e => setStartDate(e.target.value)} />
           {isAdmin && (
-            <select 
-              value={filterManager} 
-              onChange={e => { setFilterManager(e.target.value); setFilterShop('All'); }} 
-              className="bg-white p-3 rounded-xl text-xs font-black uppercase tracking-widest shadow-sm outline-none flex-1 md:flex-none"
-            >
+            <select value={filterManager} onChange={e => { setFilterManager(e.target.value); setFilterShop('All'); }} className="bg-white p-3 rounded-xl text-xs font-black uppercase tracking-widest shadow-sm outline-none flex-1 md:flex-none">
               <option value="All">All Managers</option>
               {managers.map(m => <option key={m} value={m}>{m}</option>)}
             </select>
           )}
-          <select 
-            value={filterShop} 
-            onChange={e => setFilterShop(e.target.value)} 
-            className="bg-white p-3 rounded-xl text-xs font-black uppercase tracking-widest shadow-sm outline-none flex-1 md:flex-none"
-          >
+          <select value={filterShop} onChange={e => setFilterShop(e.target.value)} className="bg-white p-3 rounded-xl text-xs font-black uppercase tracking-widest shadow-sm outline-none flex-1 md:flex-none">
             <option value="All">All Shops</option>
             {availableShopsForFilter.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
           </select>
@@ -542,7 +514,7 @@ function SalesList({ records, targets, shops, managers, role, db, appId, userPro
               <th className="px-8 py-6">Area Manager</th>
               <th className="px-8 py-6">Shop Name</th>
               <th className="px-8 py-6 text-center">GA Ach</th>
-              <th className="px-8 py-6 text-center">GA % </th>
+              <th className="px-8 py-6 text-center">% Completion</th>
               <th className="px-8 py-6 text-center">OC Ach</th>
               <th className="px-8 py-6 text-center">Hours Worked</th>
               {role === 'admin' && <th className="px-8 py-6 text-right">Actions</th>}
@@ -626,23 +598,12 @@ function UserSearch({ users, db, appId, managers }) {
               </div>
             </div>
             
-            <button 
-              onClick={() => handleDeleteUser(u.uid)} 
-              className="absolute top-6 right-6 p-2 text-slate-200 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
-            >
-              <Trash2 size={16} />
-            </button>
+            <button onClick={() => handleDeleteUser(u.uid)} className="absolute top-6 right-6 p-2 text-slate-200 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"><Trash2 size={16} /></button>
 
             {editingId === u.uid ? (
               <div className="space-y-3">
-                <select className="w-full bg-slate-50 p-3 rounded-xl text-xs font-bold outline-none" value={editForm.role} onChange={e => setEditForm({...editForm, role: e.target.value})}>
-                  <option value="user">USER</option>
-                  <option value="admin">ADMIN</option>
-                </select>
-                <select className="w-full bg-slate-50 p-3 rounded-xl text-xs font-bold outline-none" value={editForm.assignedManager} onChange={e => setEditForm({...editForm, assignedManager: e.target.value})}>
-                  <option value="">Assign Manager</option>
-                  {managers.map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
+                <select className="w-full bg-slate-50 p-3 rounded-xl text-xs font-bold outline-none" value={editForm.role} onChange={e => setEditForm({...editForm, role: e.target.value})}><option value="user">USER</option><option value="admin">ADMIN</option></select>
+                <select className="w-full bg-slate-50 p-3 rounded-xl text-xs font-bold outline-none" value={editForm.assignedManager} onChange={e => setEditForm({...editForm, assignedManager: e.target.value})}><option value="">Assign Manager</option>{managers.map(m => <option key={m} value={m}>{m}</option>)}</select>
                 <div className="flex gap-2">
                   <button onClick={() => handleUpdate(u.uid)} className="flex-1 bg-slate-900 text-white p-3 rounded-xl font-black">Save</button>
                   <button onClick={() => setEditingId(null)} className="p-3 bg-slate-100 rounded-xl"><X size={18}/></button>
@@ -722,7 +683,7 @@ function MobileNav({ view, setView, role }) {
 function LoadingScreen() { return ( <div className="flex h-screen items-center justify-center bg-slate-50"><div className="text-center"><Loader2 className="w-12 h-12 animate-spin text-red-600 mx-auto mb-4" /><p className="text-slate-500 font-black text-xs uppercase tracking-widest">Processing Cloud Assets...</p></div></div> ); }
 function Onboarding({ user, setView, setUserProfile }) {
   const [name, setName] = useState(''); const handleSave = async () => { if (!name.trim()) return; const profile = { username: name, role: 'user', assignedManager: '', createdAt: Date.now() }; await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid), profile); setUserProfile(profile); setView('dashboard'); };
-  return ( <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC] p-4"><div className="w-full max-w-md bg-white rounded-[3rem] p-10 shadow-xl text-center"><h2 className="text-2xl font-black text-slate-800 mb-8 italic">Profile Setup</h2><input type="text" value={name} onChange={e => setName(name.target.value)} placeholder="Full Name" className="w-full bg-slate-50 p-5 rounded-2xl font-bold mb-6 text-center text-xl outline-none" /><button onClick={handleSave} className="w-full bg-red-600 text-white py-5 rounded-2xl font-black text-lg">Continue</button></div></div> );
+  return ( <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC] p-4"><div className="w-full max-w-md bg-white rounded-[3rem] p-10 shadow-xl text-center"><h2 className="text-2xl font-black text-slate-800 mb-8 italic">Profile Setup</h2><input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Full Name" className="w-full bg-slate-50 p-5 rounded-2xl font-bold mb-6 text-center text-xl outline-none" /><button onClick={handleSave} className="w-full bg-red-600 text-white py-5 rounded-2xl font-black text-lg">Continue</button></div></div> );
 }
 const styleTag = document.createElement('style');
 styleTag.innerHTML = `@media print { .no-print { display: none !important; } body { background: white !important; padding: 0 !important; margin: 0 !important; } main { margin: 0 !important; padding: 0 !important; width: 100% !important; max-width: 100% !important; } .md\\:pl-64 { padding-left: 0 !important; } nav { display: none !important; } .rounded-\\[2\\.5rem\\], .rounded-\\[3rem\\] { border-radius: 0 !important; border: 1px solid #eee !important; } } .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; } .custom-scrollbar::-webkit-scrollbar-thumb { background: #E2E8F0; border-radius: 10px; }`;
