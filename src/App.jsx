@@ -206,6 +206,10 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
   const assignedManager = userProfile?.assignedManager || 'All';
   const [filterManager, setFilterManager] = useState(isAdmin ? 'All' : assignedManager);
   const [selectedManager, setSelectedManager] = useState(null);
+  
+  // Table Specific Filters
+  const [tableSearch, setTableSearch] = useState('');
+  const [performanceFilter, setPerformanceFilter] = useState('All');
 
   const filteredRecords = useMemo(() => {
     let data = [...records];
@@ -248,6 +252,17 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
     }));
   }, [filteredRecords, managers, shops, targets]);
 
+  const filteredManagerSummary = useMemo(() => {
+    return managerSummary.filter(m => {
+      const matchesSearch = m.name.toLowerCase().includes(tableSearch.toLowerCase());
+      const numCompletion = parseFloat(m.completionGA);
+      if (performanceFilter === 'Under') return matchesSearch && numCompletion < 50;
+      if (performanceFilter === 'Good') return matchesSearch && numCompletion >= 50 && numCompletion < 100;
+      if (performanceFilter === 'Full') return matchesSearch && numCompletion >= 100;
+      return matchesSearch;
+    });
+  }, [managerSummary, tableSearch, performanceFilter]);
+
   const shopDetails = useMemo(() => {
     if (!selectedManager) return [];
     return shops.filter(s => s.manager === selectedManager).map(s => {
@@ -270,41 +285,136 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
     const activeShopNamesToday = [...new Set(records.filter(r => r.date === today).map(r => r.shopName))];
     const totalGA = filteredRecords.reduce((acc, r) => acc + (r.gaAch || 0), 0);
     const totalOC = filteredRecords.reduce((acc, r) => acc + (r.ocAch || 0), 0);
-    return { totalAchieved: totalGA + totalOC, closedShopsToday: Math.max(0, shops.length - activeShopNamesToday.length) };
+    return { 
+      totalGA, 
+      totalOC, 
+      closedShopsToday: Math.max(0, shops.length - activeShopNamesToday.length) 
+    };
   }, [records, shops, filteredRecords]);
+
+  const exportSummaryExcel = () => {
+    const headers = ['Manager', 'GA Target', 'GA Ach.', 'GA %', 'GA Remaining', 'OC Target', 'OC Ach.', 'OC %', 'Avg Hours'];
+    const rows = filteredManagerSummary.map(m => [
+      m.name, m.targetGA, m.totalGA, m.completionGA + '%', m.remainingGA,
+      m.targetOC, m.totalOC, m.completionOC + '%', m.avgHours
+    ]);
+    const csvContent = "data:text/csv;charset=utf-8," + [headers, ...rows].map(e => `"${e.join('","')}"`).join("\n");
+    const link = document.createElement("a");
+    link.setAttribute("href", encodeURI(csvContent));
+    link.setAttribute("download", `Manager_Summary_${new Date().toLocaleDateString()}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const printSummary = () => {
+    window.print();
+  };
 
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 no-print">
         <div className="flex items-center gap-3">
           <div className="p-3 bg-red-600 rounded-2xl shadow-lg shadow-red-200"><LayoutDashboard className="text-white" size={24} /></div>
           <div><h2 className="text-2xl font-black text-slate-800 tracking-tight italic">Performance Hub</h2></div>
         </div>
+        {isAdmin && (
+          <select 
+            value={filterManager} 
+            onChange={e => setFilterManager(e.target.value)} 
+            className="text-xs font-black uppercase tracking-widest p-3 bg-white border border-slate-100 rounded-xl shadow-sm outline-none cursor-pointer"
+          >
+            <option value="All">All Regions</option>
+            {managers.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+        )}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 no-print">
         <div className="lg:col-span-2 bg-white rounded-[2.5rem] shadow-sm border border-slate-100 overflow-hidden">
-          <div className="p-6 border-b border-slate-50"><h3 className="font-black text-slate-800 text-xs uppercase tracking-widest flex items-center gap-2"><Clock size={16} className="text-red-500" /> Latest Activity</h3></div>
+          <div className="p-6 border-b border-slate-50 flex justify-between items-center">
+            <h3 className="font-black text-slate-800 text-xs uppercase tracking-widest flex items-center gap-2">
+              <Clock size={16} className="text-red-500" /> Latest Activity
+            </h3>
+          </div>
           <table className="w-full text-left">
             <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400"><tr className="tracking-widest"><th className="px-6 py-4">Area Manager</th><th className="px-6 py-4">Last Sales Date & Time</th></tr></thead>
             <tbody className="divide-y divide-slate-50">{managerSummary.map((m, i) => (<tr key={i} className="hover:bg-slate-50 transition-colors"><td className="px-6 py-4 font-black text-slate-700">{m.name}</td><td className="px-6 py-4 font-bold text-slate-400">{m.lastActivity ? `${new Date(m.lastActivity).toLocaleDateString()} ${new Date(m.lastActivity).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : '--'}</td></tr>))}</tbody>
           </table>
         </div>
         <div className="space-y-4">
-          <div className="bg-slate-900 p-8 rounded-[2.5rem] text-white shadow-xl shadow-slate-200"><p className="text-[10px] font-black uppercase text-slate-400 mb-2">Total Numbers Achieved</p><h4 className="text-4xl font-black italic">{operationalStats.totalAchieved.toLocaleString()}</h4></div>
-          <div className="bg-red-600 p-8 rounded-[2.5rem] text-white shadow-xl shadow-red-100"><p className="text-[10px] font-black uppercase text-red-200 mb-2">Closed Shops Today</p><h4 className="text-4xl font-black italic">{operationalStats.closedShopsToday}</h4></div>
+          <div className="bg-red-600 p-6 rounded-[2rem] text-white shadow-xl shadow-red-100">
+            <p className="text-[10px] font-black uppercase text-red-100 mb-1">Total GA Achieved</p>
+            <h4 className="text-3xl font-black italic">{operationalStats.totalGA.toLocaleString()}</h4>
+          </div>
+          <div className="bg-blue-600 p-6 rounded-[2rem] text-white shadow-xl shadow-blue-100">
+            <p className="text-[10px] font-black uppercase text-blue-100 mb-1">Total OC Achieved</p>
+            <h4 className="text-3xl font-black italic">{operationalStats.totalOC.toLocaleString()}</h4>
+          </div>
+          <div className="bg-slate-900 p-6 rounded-[2rem] text-white shadow-xl shadow-slate-200">
+            <p className="text-[10px] font-black uppercase text-slate-400 mb-1">Closed Shops Today</p>
+            <h4 className="text-3xl font-black italic">{operationalStats.closedShopsToday}</h4>
+          </div>
         </div>
       </div>
 
+      {/* Summary Section Header & Filters */}
       <div className="bg-white rounded-[2.5rem] shadow-sm border border-slate-100 overflow-hidden">
-        <div className="p-8 border-b border-slate-50"><h3 className="font-black text-slate-800 text-lg tracking-tight">Manager Performance Summary</h3></div>
+        <div className="p-8 border-b border-slate-50 space-y-6">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <h3 className="font-black text-slate-800 text-lg tracking-tight">Manager Performance Summary</h3>
+            <div className="flex items-center gap-2 no-print">
+              <button 
+                onClick={exportSummaryExcel}
+                className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-600 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-emerald-100 transition-all"
+              >
+                <FileSpreadsheet size={16} /> Export Excel
+              </button>
+              <button 
+                onClick={printSummary}
+                className="flex items-center gap-2 px-4 py-2 bg-slate-50 text-slate-600 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-100 transition-all"
+              >
+                <FileText size={16} /> Save PDF
+              </button>
+            </div>
+          </div>
+          
+          {/* Internal Table Filters */}
+          <div className="flex flex-wrap gap-4 no-print border-t pt-6 border-slate-50">
+             <div className="relative flex-1 min-w-[200px]">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" />
+                <input 
+                  type="text" 
+                  placeholder="Search manager..." 
+                  className="w-full pl-9 pr-4 py-3 bg-slate-50 border-none rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-red-500/10"
+                  value={tableSearch}
+                  onChange={e => setTableSearch(e.target.value)}
+                />
+             </div>
+             <select 
+               className="px-4 py-3 bg-slate-50 border-none rounded-xl text-[10px] font-black uppercase tracking-widest outline-none"
+               value={performanceFilter}
+               onChange={e => setPerformanceFilter(e.target.value)}
+             >
+                <option value="All">All Performance</option>
+                <option value="Full">Achieved (100%+)</option>
+                <option value="Good">In Progress (50-99%)</option>
+                <option value="Under">Critical (&lt;50%)</option>
+             </select>
+          </div>
+        </div>
+        
         <div className="overflow-x-auto">
           <table className="w-full text-left">
             <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest">
               <tr><th className="px-8 py-5">Area Manager</th><th className="px-4 py-5 text-center">GA Target</th><th className="px-4 py-5 text-center">GA Ach.</th><th className="px-4 py-5 text-center">%</th><th className="px-4 py-5 text-center">Remaining</th><th className="px-4 py-5 text-center">OC Target</th><th className="px-4 py-5 text-center">OC Ach.</th><th className="px-4 py-5 text-center">%</th><th className="px-8 py-5 text-center">AVG Hours</th></tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
-              {managerSummary.map((m, idx) => (
+              {filteredManagerSummary.length === 0 ? (
+                <tr>
+                  <td colSpan="9" className="px-8 py-10 text-center font-bold text-slate-300 italic">No managers found matching filters.</td>
+                </tr>
+              ) : filteredManagerSummary.map((m, idx) => (
                 <React.Fragment key={idx}>
                   <tr onClick={() => setSelectedManager(selectedManager === m.name ? null : m.name)} className={`cursor-pointer transition-colors ${selectedManager === m.name ? 'bg-red-50' : 'hover:bg-slate-50'}`}>
                     <td className="px-8 py-5 font-black text-slate-700 flex items-center gap-2">{selectedManager === m.name ? <ChevronDown size={14} className="text-red-500" /> : <ChevronRight size={14} className="text-slate-300" />}{m.name}</td>
@@ -344,21 +454,21 @@ function SalesCollectionForm({ areaManagers, shops, user, db, appId, userProfile
   };
   return (
     <div className="max-w-2xl mx-auto py-10">
-      <h2 className="text-3xl font-black text-slate-800 mb-8 text-center italic uppercase">Daily Sales Entry</h2>
+      <h2 className="text-3xl font-black text-slate-800 mb-8 text-center italic uppercase tracking-tighter">Daily Sales Entry</h2>
       <form onSubmit={handleSubmit} className="bg-white p-12 rounded-[3.5rem] shadow-2xl space-y-8 border border-slate-50">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Date</label><input required type="date" className="w-full bg-slate-50 p-4 rounded-2xl font-bold border-none" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} /></div>
-          <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Manager</label><select required disabled={!isAdmin} className="w-full bg-slate-50 p-4 rounded-2xl font-bold" value={isAdmin ? formData.areaManager : assigned} onChange={e => setFormData({...formData, areaManager: e.target.value, shopName: ''})}>{areaManagers.map(m => <option key={m} value={m}>{m}</option>)}</select></div>
+          <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Date</label><input required type="date" className="w-full bg-slate-50 p-4 rounded-2xl font-bold border-none outline-none focus:ring-2 focus:ring-red-500/10" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} /></div>
+          <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Manager</label><select required disabled={!isAdmin} className="w-full bg-slate-50 p-4 rounded-2xl font-bold outline-none" value={isAdmin ? formData.areaManager : assigned} onChange={e => setFormData({...formData, areaManager: e.target.value, shopName: ''})}>{areaManagers.map(m => <option key={m} value={m}>{m}</option>)}</select></div>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Shop</label><select required className="w-full bg-slate-50 p-4 rounded-2xl font-bold" value={formData.shopName} onChange={e => setFormData({...formData, shopName: e.target.value})}><option value="">Select Shop</option>{availableShops.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}</select></div>
-          <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Hours</label><input required type="text" placeholder="09:00 - 18:00" className="w-full bg-slate-50 p-4 rounded-2xl font-bold" value={formData.workingHours} onChange={e => setFormData({...formData, workingHours: e.target.value})} /></div>
+          <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Shop</label><select required className="w-full bg-slate-50 p-4 rounded-2xl font-bold outline-none" value={formData.shopName} onChange={e => setFormData({...formData, shopName: e.target.value})}><option value="">Select Shop</option>{availableShops.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}</select></div>
+          <div className="space-y-1"><label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Hours</label><input required type="text" placeholder="09:00 - 18:00" className="w-full bg-slate-50 p-4 rounded-2xl font-bold outline-none" value={formData.workingHours} onChange={e => setFormData({...formData, workingHours: e.target.value})} /></div>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <input required type="number" placeholder="GA Ach" className="w-full bg-red-50 p-6 rounded-[2rem] text-3xl font-black text-red-600 outline-none" value={formData.gaAch} onChange={e => setFormData({...formData, gaAch: e.target.value})} />
-          <input required type="number" placeholder="OC Ach" className="w-full bg-blue-50 p-6 rounded-[2rem] text-3xl font-black text-blue-600 outline-none" value={formData.ocAch} onChange={e => setFormData({...formData, ocAch: e.target.value})} />
+          <input required type="number" placeholder="GA Ach" className="w-full bg-red-50 p-6 rounded-[2rem] text-3xl font-black text-red-600 outline-none border border-red-100" value={formData.gaAch} onChange={e => setFormData({...formData, gaAch: e.target.value})} />
+          <input required type="number" placeholder="OC Ach" className="w-full bg-blue-50 p-6 rounded-[2rem] text-3xl font-black text-blue-600 outline-none border border-blue-100" value={formData.ocAch} onChange={e => setFormData({...formData, ocAch: e.target.value})} />
         </div>
-        <textarea placeholder="Shift notes..." className="w-full bg-slate-50 p-4 rounded-2xl min-h-[100px]" value={formData.note} onChange={e => setFormData({...formData, note: e.target.value})} />
+        <textarea placeholder="Shift notes..." className="w-full bg-slate-50 p-4 rounded-2xl min-h-[100px] outline-none" value={formData.note} onChange={e => setFormData({...formData, note: e.target.value})} />
         {success && <div className="p-4 bg-emerald-50 text-emerald-600 rounded-2xl text-[10px] font-black text-center uppercase">Records Saved</div>}
         <button type="submit" disabled={submitting} className="w-full bg-slate-900 text-white py-6 rounded-[2rem] font-black text-xl shadow-xl hover:bg-black transition-all">Submit</button>
       </form>
@@ -373,7 +483,7 @@ function SalesList({ records, targets, shops, managers, role, db, appId }) {
   const filtered = useMemo(() => { let data = [...records]; if (filterManager !== 'All') data = data.filter(r => r.areaManager === filterManager); if (startDate) data = data.filter(r => r.date === startDate); return data; }, [records, filterManager, startDate]);
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center"><h2 className="text-3xl font-black text-slate-800 italic uppercase">Audit Trail</h2><input type="date" className="bg-white p-3 rounded-xl text-xs font-black shadow-sm" value={startDate} onChange={e => setStartDate(e.target.value)} /></div>
+      <div className="flex justify-between items-center"><h2 className="text-3xl font-black text-slate-800 italic uppercase">Audit Trail</h2><input type="date" className="bg-white p-3 rounded-xl text-xs font-black shadow-sm outline-none" value={startDate} onChange={e => setStartDate(e.target.value)} /></div>
       <div className="bg-white rounded-[2.5rem] shadow-xl overflow-hidden overflow-x-auto">
         <table className="w-full text-left">
           <thead className="bg-[#0F172A] text-slate-400 text-[10px] font-black uppercase tracking-widest"><tr className="tracking-widest"><th className="px-8 py-6">Time Stamp</th><th className="px-8 py-6">Date</th><th className="px-8 py-6 text-center">GA Ach</th><th className="px-8 py-6 text-center">% Completion</th><th className="px-8 py-6 text-center">OC Ach</th><th className="px-8 py-6 text-center">Working Hours</th>{role === 'admin' && <th className="px-8 py-6 text-right">Actions</th>}</tr></thead>
@@ -422,16 +532,52 @@ function UserSearch({ users, db, appId, managers }) {
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({ username: '', role: 'user', assignedManager: '' });
   const handleUpdate = async (uid) => { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', uid), editForm); setEditingId(null); };
+  
+  const handleDeleteUser = async (uid) => {
+    if (window.confirm("Are you sure you want to delete this user? This action cannot be undone.")) {
+      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', uid));
+    }
+  };
+
   return (
     <div className="space-y-6">
       <h2 className="text-3xl font-black uppercase italic tracking-tighter">Team Management</h2>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {users.map(u => (
-          <div key={u.uid} className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-col gap-4">
-            <div className="flex items-center gap-4"><div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center font-black text-slate-300 uppercase">{u.username?.charAt(0)}</div><div><p className="font-black text-slate-800 text-lg">{u.username}</p><span className="text-[10px] font-black uppercase tracking-widest text-red-600">{u.assignedManager || 'No Region'}</span></div></div>
+          <div key={u.uid} className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-col gap-4 group relative">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center font-black text-slate-300 uppercase">{u.username?.charAt(0)}</div>
+              <div>
+                <p className="font-black text-slate-800 text-lg">{u.username}</p>
+                <span className="text-[10px] font-black uppercase tracking-widest text-red-600">{u.assignedManager || 'No Region'}</span>
+              </div>
+            </div>
+            
+            <button 
+              onClick={() => handleDeleteUser(u.uid)} 
+              className="absolute top-6 right-6 p-2 text-slate-200 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+            >
+              <Trash2 size={16} />
+            </button>
+
             {editingId === u.uid ? (
-              <div className="space-y-3"><select className="w-full bg-slate-50 p-3 rounded-xl text-xs font-bold" value={editForm.role} onChange={e => setEditForm({...editForm, role: e.target.value})}><option value="user">USER</option><option value="admin">ADMIN</option></select><select className="w-full bg-slate-50 p-3 rounded-xl text-xs font-bold" value={editForm.assignedManager} onChange={e => setEditForm({...editForm, assignedManager: e.target.value})}><option value="">Assign Manager</option>{managers.map(m => <option key={m} value={m}>{m}</option>)}</select><div className="flex gap-2"><button onClick={() => handleUpdate(u.uid)} className="flex-1 bg-slate-900 text-white p-3 rounded-xl font-black">Save</button><button onClick={() => setEditingId(null)} className="p-3 bg-slate-100 rounded-xl"><X size={18}/></button></div></div>
-            ) : ( <button onClick={() => { setEditingId(u.uid); setEditForm({ username: u.username, role: u.role, assignedManager: u.assignedManager || '' }); }} className="w-full bg-slate-50 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-100 transition-all">Modify Profile</button> )}
+              <div className="space-y-3">
+                <select className="w-full bg-slate-50 p-3 rounded-xl text-xs font-bold outline-none" value={editForm.role} onChange={e => setEditForm({...editForm, role: e.target.value})}>
+                  <option value="user">USER</option>
+                  <option value="admin">ADMIN</option>
+                </select>
+                <select className="w-full bg-slate-50 p-3 rounded-xl text-xs font-bold outline-none" value={editForm.assignedManager} onChange={e => setEditForm({...editForm, assignedManager: e.target.value})}>
+                  <option value="">Assign Manager</option>
+                  {managers.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+                <div className="flex gap-2">
+                  <button onClick={() => handleUpdate(u.uid)} className="flex-1 bg-slate-900 text-white p-3 rounded-xl font-black">Save</button>
+                  <button onClick={() => setEditingId(null)} className="p-3 bg-slate-100 rounded-xl"><X size={18}/></button>
+                </div>
+              </div>
+            ) : ( 
+              <button onClick={() => { setEditingId(u.uid); setEditForm({ username: u.username, role: u.role, assignedManager: u.assignedManager || '' }); }} className="w-full bg-slate-50 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-100 transition-all">Modify Profile</button> 
+            )}
           </div>
         ))}
       </div>
@@ -449,14 +595,14 @@ function AdminDashboard({ areaManagers, shops, targets, db, appId }) {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
         <div className="bg-white p-10 rounded-[3rem] shadow-sm border border-slate-100 flex flex-col gap-4">
           <h3 className="font-black text-slate-800 uppercase text-[10px] tracking-widest mb-2 flex items-center gap-2 text-red-600"><UserPlus size={18} /> Add Area Manager</h3>
-          <div className="flex gap-2"><input value={newM} onChange={e => setNewM(e.target.value)} className="flex-1 bg-slate-50 p-4 rounded-xl font-bold" placeholder="Manager Name" /><button onClick={() => { update([...areaManagers, newM], null); setNewM(''); }} className="bg-red-600 text-white px-6 rounded-xl font-black">Add</button></div>
+          <div className="flex gap-2"><input value={newM} onChange={e => setNewM(e.target.value)} className="flex-1 bg-slate-50 p-4 rounded-xl font-bold outline-none" placeholder="Manager Name" /><button onClick={() => { update([...areaManagers, newM], null); setNewM(''); }} className="bg-red-600 text-white px-6 rounded-xl font-black shadow-lg">Add</button></div>
         </div>
         <div className="bg-white p-10 rounded-[3rem] shadow-sm border border-slate-100 flex flex-col gap-4">
           <h3 className="font-black text-slate-800 uppercase text-[10px] tracking-widest mb-2 flex items-center gap-2 text-red-600"><Store size={18} /> Add Shop</h3>
-          <div className="flex flex-col gap-2"><input value={newS} onChange={e => setNewS(e.target.value)} className="bg-slate-50 p-4 rounded-xl font-bold" placeholder="Shop Name" /><select value={assignedM} onChange={e => setAssignedM(e.target.value)} className="bg-slate-50 p-4 rounded-xl font-bold"><option value="">Assign Manager</option>{areaManagers.map(m => <option key={m} value={m}>{m}</option>)}</select><button onClick={() => { if(newS && assignedM) update(null, [...shops, {name: newS, manager: assignedM}]); setNewS(''); }} className="bg-slate-900 text-white p-4 rounded-xl font-black">Link Shop</button></div>
+          <div className="flex flex-col gap-2"><input value={newS} onChange={e => setNewS(e.target.value)} className="bg-slate-50 p-4 rounded-xl font-bold outline-none" placeholder="Shop Name" /><select value={assignedM} onChange={e => setAssignedM(e.target.value)} className="bg-slate-50 p-4 rounded-xl font-bold outline-none"><option value="">Assign Manager</option>{areaManagers.map(m => <option key={m} value={m}>{m}</option>)}</select><button onClick={() => { if(newS && assignedM) update(null, [...shops, {name: newS, manager: assignedM}]); setNewS(''); }} className="bg-slate-900 text-white p-4 rounded-xl font-black">Link Shop</button></div>
         </div>
       </div>
-      <div className="bg-white rounded-[3rem] shadow-2xl overflow-hidden overflow-x-auto"><table className="w-full text-left"><thead className="bg-[#0F172A] text-slate-400 text-[10px] font-black uppercase tracking-widest"><tr><th className="px-10 py-6">Manager</th><th className="px-10 py-6">Shop</th><th className="px-10 py-6 text-right">Delete</th></tr></thead><tbody className="divide-y divide-slate-50">{shops.map((s, idx) => (<tr key={idx} className="hover:bg-slate-50"><td className="px-10 py-6 font-black text-slate-800">{s.manager}</td><td className="px-10 py-6 font-bold text-slate-400">{s.name}</td><td className="px-10 py-6 text-right"><button onClick={() => { if(confirm("Delete shop?")) update(null, shops.filter(sh => sh.name !== s.name)); }} className="p-3 bg-red-50 text-red-500 rounded-xl"><Trash2 size={16}/></button></td></tr>))}</tbody></table></div>
+      <div className="bg-white rounded-[3rem] shadow-2xl overflow-hidden overflow-x-auto"><table className="w-full text-left"><thead className="bg-[#0F172A] text-slate-400 text-[10px] font-black uppercase tracking-widest"><tr><th className="px-10 py-6">Manager</th><th className="px-10 py-6">Shop</th><th className="px-10 py-6 text-right">Delete</th></tr></thead><tbody className="divide-y divide-slate-50">{shops.map((s, idx) => (<tr key={idx} className="hover:bg-slate-50"><td className="px-10 py-6 font-black text-slate-800">{s.manager}</td><td className="px-10 py-6 font-bold text-slate-400">{s.name}</td><td className="px-10 py-6 text-right"><button onClick={() => { if(confirm("Delete shop?")) update(null, shops.filter(sh => sh.name !== s.name)); }} className="p-3 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button></td></tr>))}</tbody></table></div>
     </div>
   );
 }
@@ -471,10 +617,10 @@ function LoginPortal() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#0F172A] p-4">
       <div className="w-full max-w-md bg-white rounded-[3rem] p-10 shadow-2xl">
-        <div className="text-center mb-10"><ShieldCheck className="text-red-600 mx-auto mb-6" size={60} /><h1 className="text-3xl font-black text-slate-800 italic">Cash Shop Portal</h1><p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mt-1">{authMode === 'forgot' ? 'Recovery Mode' : 'Secured Access'}</p></div>
+        <div className="text-center mb-10"><ShieldCheck className="text-red-600 mx-auto mb-6" size={60} /><h1 className="text-3xl font-black text-slate-800 italic tracking-tighter">Cash Shop Portal</h1><p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mt-1">{authMode === 'forgot' ? 'Recovery Mode' : 'Secured Access'}</p></div>
         <form onSubmit={handle} className="space-y-4">
-          <div className="space-y-1"><label className="text-[10px] font-black uppercase text-slate-400 px-1">Email</label><input required type="email" placeholder="email@company.com" className="w-full bg-slate-50 p-4 rounded-xl font-bold border-none" value={email} onChange={e => setEmail(e.target.value)} /></div>
-          {authMode !== 'forgot' && <div className="space-y-1"><label className="text-[10px] font-black uppercase text-slate-400 px-1">Password</label><input required type="password" placeholder="••••••••" className="w-full bg-slate-50 p-4 rounded-xl font-bold border-none" value={password} onChange={e => setPassword(e.target.value)} /></div>}
+          <div className="space-y-1"><label className="text-[10px] font-black uppercase text-slate-400 px-1">Email</label><input required type="email" placeholder="email@company.com" className="w-full bg-slate-50 p-4 rounded-xl font-bold border-none outline-none" value={email} onChange={e => setEmail(e.target.value)} /></div>
+          {authMode !== 'forgot' && <div className="space-y-1"><label className="text-[10px] font-black uppercase text-slate-400 px-1">Password</label><input required type="password" placeholder="••••••••" className="w-full bg-slate-50 p-4 rounded-xl font-bold border-none outline-none" value={password} onChange={e => setPassword(e.target.value)} /></div>}
           {error && <div className="p-4 bg-red-50 text-red-500 rounded-xl text-[10px] font-black text-center">{error}</div>}
           {message && <div className="p-4 bg-emerald-50 text-emerald-600 rounded-xl text-[10px] font-black text-center">{message}</div>}
           <button disabled={loading} className="w-full bg-slate-900 text-white py-5 rounded-2xl font-black text-lg shadow-xl hover:bg-black transition-all">{loading ? <Loader2 className="animate-spin mx-auto"/> : (authMode === 'forgot' ? 'Send Link' : 'Login')}</button>
@@ -506,5 +652,9 @@ function Onboarding({ user, setView, setUserProfile }) {
   return ( <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC] p-4"><div className="w-full max-w-md bg-white rounded-[3rem] p-10 shadow-xl text-center"><h2 className="text-2xl font-black text-slate-800 mb-8 italic">Profile Setup</h2><input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Full Name" className="w-full bg-slate-50 p-5 rounded-2xl font-bold mb-6 text-center text-xl outline-none" /><button onClick={handleSave} className="w-full bg-red-600 text-white py-5 rounded-2xl font-black text-lg">Continue</button></div></div> );
 }
 const styleTag = document.createElement('style');
-styleTag.innerHTML = `@media print { .no-print { display: none !important; } body { background: white !important; } } .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; } .custom-scrollbar::-webkit-scrollbar-thumb { background: #E2E8F0; border-radius: 10px; }`;
+styleTag.innerHTML = `@media print { .no-print { display: none !important; } body { background: white !important; padding: 0 !important; margin: 0 !important; } main { margin: 0 !important; padding: 0 !important; width: 100% !important; max-width: 100% !important; } .md\\:pl-64 { padding-left: 0 !important; } nav { display: none !important; } .rounded-\\[2\\.5rem\\], .rounded-\\[3rem\\] { border-radius: 0 !important; border: 1px solid #eee !important; } } .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; } .custom-scrollbar::-webkit-scrollbar-thumb { background: #E2E8F0; border-radius: 10px; }`;
 document.head.appendChild(styleTag);
+
+
+
+
