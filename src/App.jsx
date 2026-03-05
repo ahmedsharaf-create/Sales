@@ -44,14 +44,18 @@ import {
   Check,
   UserPlus,
   UserCog,
-  Activity
+  Activity,
+  Download,
+  Upload,
+  PieChart as PieIcon,
+  Clock
 } from 'lucide-react';
 
 // --- Firebase Configuration ---
 const firebaseConfig = typeof __firebase_config !== 'undefined' 
   ? JSON.parse(__firebase_config) 
   : {
-      apiKey: "AIzaSyAYb6zn5YulU9Ght-3T2vHFzdbOL94GYqs",
+      apiKey: "AIzaSyAYb6zn5YulU9Ght-3T2vHFdbOL94GYqs",
       authDomain: "pyramids-sales.firebaseapp.com",
       projectId: "pyramids-sales",
       storageBucket: "pyramids-sales.firebasestorage.app",
@@ -70,6 +74,51 @@ try {
 }
 
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'pyramids-sales-v1';
+
+// --- Custom SVG Chart Components ---
+
+const SimpleAreaChart = ({ data, color, dataKey }) => {
+  if (!data || data.length === 0) return <div className="h-full flex items-center justify-center text-slate-300 text-xs italic">No trend data available</div>;
+  
+  const height = 200;
+  const width = 500;
+  const maxVal = Math.max(...data.map(d => d[dataKey]), 10);
+  const padding = 20;
+
+  const points = data.map((d, i) => {
+    const x = data.length > 1 ? (i / (data.length - 1)) * width : width / 2;
+    const y = height - ((d[dataKey] / maxVal) * (height - padding));
+    return `${x},${y}`;
+  }).join(' ');
+
+  const areaPoints = data.length > 1 
+    ? `0,${height} ${points} ${width},${height}`
+    : `${width/2},${height} ${points} ${width/2},${height}`;
+
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full overflow-visible">
+      <defs>
+        <linearGradient id={`grad-${dataKey}`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.3" />
+          <stop offset="100%" stopColor={color} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <path d={`M ${points}`} fill="none" stroke={color} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+      <polyline points={areaPoints} fill={`url(#grad-${dataKey})`} />
+      {data.map((d, i) => (
+        <circle 
+          key={i} 
+          cx={data.length > 1 ? (i / (data.length - 1)) * width : width / 2} 
+          cy={height - ((d[dataKey] / maxVal) * (height - padding))} 
+          r="4" 
+          fill="white" 
+          stroke={color} 
+          strokeWidth="2" 
+        />
+      ))}
+    </svg>
+  );
+};
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -207,7 +256,15 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
 
     if (isFiltered) {
       shops.filter(s => s.manager === activeFilter).forEach(s => {
-        map[s.name] = { name: s.name, gaAch: 0, ocAch: 0, gaTarget: Number(targets[s.name]?.ga || 0), ocTarget: Number(targets[s.name]?.oc || 0) };
+        map[s.name] = { 
+          name: s.name, 
+          gaAch: 0, 
+          ocAch: 0, 
+          workingHours: 0, 
+          entryCount: 0,
+          gaTarget: Number(targets[s.name]?.ga || 0), 
+          ocTarget: Number(targets[s.name]?.oc || 0) 
+        };
       });
     } else {
       managers.forEach(m => {
@@ -215,7 +272,7 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
         shops.filter(s => s.manager === m).forEach(s => {
           mGaT += Number(targets[s.name]?.ga || 0); mOcT += Number(targets[s.name]?.oc || 0);
         });
-        map[m] = { name: m, gaAch: 0, ocAch: 0, gaTarget: mGaT, ocTarget: mOcT };
+        map[m] = { name: m, gaAch: 0, ocAch: 0, workingHours: 0, entryCount: 0, gaTarget: mGaT, ocTarget: mOcT };
       });
     }
 
@@ -224,6 +281,8 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
       if (map[key]) {
         map[key].gaAch += (r.gaAch || 0);
         map[key].ocAch += (r.ocAch || 0);
+        map[key].workingHours += Number(r.workingHours || 0);
+        map[key].entryCount += 1;
       }
     });
 
@@ -238,9 +297,31 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
     return { gaAch, ocAch, gaTarget, ocTarget, gaP: gaTarget > 0 ? (gaAch / gaTarget) * 100 : 0, ocP: ocTarget > 0 ? (ocAch / ocTarget) * 100 : 0 };
   }, [summaryData]);
 
+  const chartDataTrend = useMemo(() => {
+    const dailyMap = {};
+    filteredRecords.slice(0, 15).forEach(r => {
+      const dateKey = new Date(r.timestamp).toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
+      if (!dailyMap[dateKey]) dailyMap[dateKey] = { name: dateKey, GA: 0, OC: 0 };
+      dailyMap[dateKey].GA += r.gaAch;
+      dailyMap[dateKey].OC += r.ocAch;
+    });
+    return Object.values(dailyMap).reverse();
+  }, [filteredRecords]);
+
   const exportCSV = () => {
-    const headers = ['Name', 'GA Target', 'GA Ach', 'GA %', 'GA Rem', 'OC Target', 'OC Ach', 'OC %', 'OC Rem'];
-    const rows = summaryData.map(d => [d.name, d.gaTarget, d.gaAch, (d.gaTarget > 0 ? (d.gaAch/d.gaTarget*100).toFixed(1) : 0) + '%', Math.max(0, d.gaTarget-d.gaAch), d.ocTarget, d.ocAch, (d.ocTarget > 0 ? (d.ocAch/d.ocTarget*100).toFixed(1) : 0) + '%', Math.max(0, d.ocTarget-d.ocAch)]);
+    const headers = ['Name', 'GA Target', 'GA Ach', 'GA %', 'GA Rem', 'OC Target', 'OC Ach', 'OC %', 'OC Rem', 'Avg Whs'];
+    const rows = summaryData.map(d => [
+      d.name, 
+      d.gaTarget, 
+      d.gaAch, 
+      (d.gaTarget > 0 ? (d.gaAch/d.gaTarget*100).toFixed(1) : 0) + '%', 
+      Math.max(0, d.gaTarget-d.gaAch), 
+      d.ocTarget, 
+      d.ocAch, 
+      (d.ocTarget > 0 ? (d.ocAch/d.ocTarget*100).toFixed(1) : 0) + '%', 
+      Math.max(0, d.ocTarget-d.ocAch),
+      d.entryCount > 0 ? (d.workingHours / d.entryCount).toFixed(1) : 0
+    ]);
     const csvContent = "data:text/csv;charset=utf-8," + [headers, ...rows].map(e => `"${e.join('","')}"`).join("\n");
     const link = document.createElement("a");
     link.href = encodeURI(csvContent);
@@ -278,6 +359,35 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
         <KPIBox title="LOGS" value={filteredRecords.length} color="slate" />
       </div>
 
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 print:hidden">
+        <div className="lg:col-span-2 bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-200">
+          <h3 className="font-black text-slate-700 text-xs uppercase mb-6 flex items-center gap-2 tracking-widest">
+            <TrendingUp size={16} className="text-red-500" /> 15-Entry GA Trend
+          </h3>
+          <div className="h-[250px] w-full">
+            <SimpleAreaChart data={chartDataTrend} color="#EF4444" dataKey="GA" />
+          </div>
+        </div>
+        <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-200 flex flex-col">
+          <h3 className="font-black text-slate-700 text-xs uppercase mb-6 flex items-center gap-2 tracking-widest">
+            <Activity size={16} className="text-blue-500" /> Manager GA Split
+          </h3>
+          <div className="flex-1 space-y-4">
+            {summaryData.slice(0, 5).map((m, i) => (
+              <div key={i} className="space-y-1">
+                <div className="flex justify-between text-[10px] font-black uppercase text-slate-500">
+                  <span>{m.name}</span>
+                  <span>{m.gaAch.toLocaleString()}</span>
+                </div>
+                <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                  <div className="h-full bg-blue-500" style={{ width: `${Math.min((m.gaAch/Math.max(stats.gaAch, 1))*100, 100)}%` }}></div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
       <section className="bg-white rounded-[2.5rem] border border-slate-200 shadow-xl overflow-hidden print:border-none print:shadow-none">
         <div className="p-8 border-b border-slate-100 flex justify-between items-center print:p-4">
           <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight flex items-center gap-2">
@@ -293,16 +403,19 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
           </div>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-left min-w-[1000px] print:min-w-0 print:text-[8px]">
+          <table className="w-full text-left min-w-[1200px] print:min-w-0 print:text-[8px]">
             <thead className="bg-slate-900 text-slate-400">
               <tr className="text-[10px] font-black uppercase tracking-widest">
                 <th className="px-8 py-5 print:px-2">Entity Name</th>
                 <th className="px-4 py-5 text-right bg-red-950/20 text-red-400">GA Target</th>
                 <th className="px-4 py-5 text-right bg-red-950/20 text-red-200">GA Ach.</th>
                 <th className="px-4 py-5 text-right bg-red-950/20 text-red-500">GA %</th>
+                <th className="px-4 py-5 text-right bg-red-950/20 text-white">GA Rem.</th>
                 <th className="px-4 py-5 text-right bg-blue-950/20 text-blue-400">OC Target</th>
                 <th className="px-4 py-5 text-right bg-blue-950/20 text-blue-200">OC Ach.</th>
                 <th className="px-4 py-5 text-right bg-blue-950/20 text-blue-500">OC %</th>
+                <th className="px-4 py-5 text-right bg-blue-950/20 text-white">OC Rem.</th>
+                <th className="px-4 py-5 text-right text-slate-300">Avg Whs</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 tabular-nums">
@@ -312,9 +425,12 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
                   <td className="px-4 py-5 text-right text-xs text-slate-400">{d.gaTarget.toLocaleString()}</td>
                   <td className="px-4 py-5 text-right text-sm font-black text-red-600">{d.gaAch.toLocaleString()}</td>
                   <td className="px-4 py-5 text-right text-xs font-black text-red-700">{(d.gaTarget > 0 ? (d.gaAch/d.gaTarget*100).toFixed(1) : 0)}%</td>
+                  <td className="px-4 py-5 text-right text-xs text-slate-500">{Math.max(0, d.gaTarget-d.gaAch).toLocaleString()}</td>
                   <td className="px-4 py-5 text-right text-xs text-slate-400">{d.ocTarget.toLocaleString()}</td>
                   <td className="px-4 py-5 text-right text-sm font-black text-blue-600">{d.ocAch.toLocaleString()}</td>
                   <td className="px-4 py-5 text-right text-xs font-black text-blue-700">{(d.ocTarget > 0 ? (d.ocAch/d.ocTarget*100).toFixed(1) : 0)}%</td>
+                  <td className="px-4 py-5 text-right text-xs text-slate-500">{Math.max(0, d.ocTarget-d.ocAch).toLocaleString()}</td>
+                  <td className="px-4 py-5 text-right text-xs font-bold text-slate-800">{d.entryCount > 0 ? (d.workingHours / d.entryCount).toFixed(1) : 0}</td>
                 </tr>
               ))}
             </tbody>
@@ -324,9 +440,12 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
                 <td className="px-4 py-5 text-right">{stats.gaTarget.toLocaleString()}</td>
                 <td className="px-4 py-5 text-right text-red-600">{stats.gaAch.toLocaleString()}</td>
                 <td className="px-4 py-5 text-right text-red-700">{stats.gaP.toFixed(1)}%</td>
+                <td className="px-4 py-5 text-right">{Math.max(0, stats.gaTarget-stats.gaAch).toLocaleString()}</td>
                 <td className="px-4 py-5 text-right">{stats.ocTarget.toLocaleString()}</td>
                 <td className="px-4 py-5 text-right text-blue-600">{stats.ocAch.toLocaleString()}</td>
                 <td className="px-4 py-5 text-right text-blue-700">{stats.ocP.toFixed(1)}%</td>
+                <td className="px-4 py-5 text-right">{Math.max(0, stats.ocTarget-stats.ocAch).toLocaleString()}</td>
+                <td className="px-4 py-5 text-right">—</td>
               </tr>
             </tfoot>
           </table>
@@ -374,7 +493,7 @@ function SalesCollectionForm({ areaManagers, shops, user, userProfile }) {
       await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'sales'), { 
         ...formData, 
         areaManager: isAdmin ? formData.areaManager : assigned,
-        gaAch: Number(formData.gaAch) || 0, ocAch: Number(formData.ocAch) || 0, timestamp: Date.now(), submittedBy: user.uid 
+        gaAch: Number(formData.gaAch) || 0, ocAch: Number(formData.ocAch) || 0, workingHours: Number(formData.workingHours) || 0, timestamp: Date.now(), submittedBy: user.uid 
       });
       setSuccess(true); setFormData({ areaManager: isAdmin ? '' : assigned, shopName: '', gaAch: '', ocAch: '', workingHours: '', note: '' });
       setTimeout(() => setSuccess(false), 3000);
@@ -403,17 +522,21 @@ function SalesCollectionForm({ areaManagers, shops, user, userProfile }) {
             </select>
           </div>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-6 border-t">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 pt-6 border-t">
           <div className="space-y-2">
-            <label className="text-[10px] font-black uppercase text-red-600">GA ACHIEVEMENT</label>
-            <input required type="number" className="w-full border-2 border-red-50 p-8 rounded-[2rem] font-black text-4xl text-red-600 outline-none" value={formData.gaAch} onChange={e => setFormData({...formData, gaAch: e.target.value})} />
+            <label className="text-[10px] font-black uppercase text-red-600">GA ACH</label>
+            <input required type="number" className="w-full border-2 border-red-50 p-6 rounded-2xl font-black text-2xl text-red-600 outline-none" value={formData.gaAch} onChange={e => setFormData({...formData, gaAch: e.target.value})} />
           </div>
           <div className="space-y-2">
-            <label className="text-[10px] font-black uppercase text-blue-600">OC ACHIEVEMENT</label>
-            <input required type="number" className="w-full border-2 border-blue-50 p-8 rounded-[2rem] font-black text-4xl text-blue-600 outline-none" value={formData.ocAch} onChange={e => setFormData({...formData, ocAch: e.target.value})} />
+            <label className="text-[10px] font-black uppercase text-blue-600">OC ACH</label>
+            <input required type="number" className="w-full border-2 border-blue-50 p-6 rounded-2xl font-black text-2xl text-blue-600 outline-none" value={formData.ocAch} onChange={e => setFormData({...formData, ocAch: e.target.value})} />
+          </div>
+          <div className="space-y-2">
+            <label className="text-[10px] font-black uppercase text-slate-600">Working Hours</label>
+            <input required type="number" placeholder="e.g. 8" className="w-full border-2 border-slate-50 p-6 rounded-2xl font-black text-2xl text-slate-700 outline-none" value={formData.workingHours} onChange={e => setFormData({...formData, workingHours: e.target.value})} />
           </div>
         </div>
-        <textarea className="w-full border-2 border-slate-50 p-8 rounded-[2.5rem] font-medium h-40 bg-slate-50 outline-none" value={formData.note} onChange={e => setFormData({...formData, note: e.target.value})} placeholder="Notes..."/>
+        <textarea className="w-full border-2 border-slate-50 p-8 rounded-[2.5rem] font-medium h-40 bg-slate-50 outline-none" value={formData.note} onChange={e => setFormData({...formData, note: e.target.value})} placeholder="Shift Notes..."/>
         <button type="submit" disabled={submitting || (!isAdmin && !assigned)} className="w-full bg-[#0F172A] text-white py-8 rounded-[2.5rem] font-black text-2xl hover:bg-black transition-all shadow-2xl disabled:opacity-50">
           {submitting ? 'RECORDING...' : 'CONFIRM ENTRY'}
         </button>
@@ -446,6 +569,7 @@ function SalesList({ records, targets, shops, managers, role }) {
             <tr className="bg-slate-900 text-slate-400 border-b border-slate-800 uppercase text-[10px] font-black tracking-widest">
               <th className="px-6 py-5">Time</th><th className="px-6 py-5">Manager</th><th className="px-6 py-5">Date</th><th className="px-6 py-5">Location</th>
               <th className="px-4 py-5 text-right bg-red-950/20 text-red-400">GA Ach</th><th className="px-4 py-5 text-right bg-blue-950/20 text-blue-400">OC Ach</th>
+              <th className="px-6 py-5">Whs</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 tabular-nums">
@@ -457,6 +581,7 @@ function SalesList({ records, targets, shops, managers, role }) {
                 <td className="px-6 py-4 text-sm font-black text-slate-900">{r.shopName}</td>
                 <td className="px-4 py-4 text-right text-sm font-black text-red-600 bg-red-50/10">+{r.gaAch.toLocaleString()}</td>
                 <td className="px-4 py-4 text-right text-sm font-black text-blue-600 bg-blue-50/10">+{r.ocAch.toLocaleString()}</td>
+                <td className="px-6 py-4 text-xs font-bold text-slate-600">{r.workingHours || 0}h</td>
               </tr>
             ))}
           </tbody>
@@ -466,10 +591,11 @@ function SalesList({ records, targets, shops, managers, role }) {
   );
 }
 
-// --- TARGET SETTING (RESTORED) ---
+// --- TARGET SETTING ---
 function TargetSetting({ shops, areaManagers, targets }) {
   const [editTarget, setEditTarget] = useState({ shop: '', ga: '', oc: '' });
   const [searchTerm, setSearchTerm] = useState('');
+  const [status, setStatus] = useState(null);
 
   const handleSave = async () => {
     if (!editTarget.shop) return;
@@ -478,13 +604,47 @@ function TargetSetting({ shops, areaManagers, targets }) {
     setEditTarget({ shop: '', ga: '', oc: '' });
   };
 
+  const handleCSVUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const text = event.target.result;
+        const rows = text.split('\n').map(r => r.split(','));
+        const newTargets = { ...targets };
+        rows.slice(1).forEach(row => {
+          if (row.length >= 3) {
+            const name = row[0].trim().replace(/"/g, '');
+            const ga = parseFloat(row[1]) || 0;
+            const oc = parseFloat(row[2]) || 0;
+            if (shops.some(s => s.name === name)) newTargets[name] = { ga, oc };
+          }
+        });
+        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config'), { targets: newTargets, areaManagers, shops }, { merge: true });
+        setStatus("Excel Targets Uploaded Success!");
+        setTimeout(() => setStatus(null), 3000);
+      } catch (err) { setStatus("Error processing file."); }
+    };
+    reader.readAsText(file);
+  };
+
   const filteredShops = shops.filter(s => s.name.toLowerCase().includes(searchTerm.toLowerCase()));
 
   return (
     <div className="space-y-8 animate-in slide-in-from-bottom-5 duration-500">
-      <header><h2 className="text-4xl font-black text-slate-800 uppercase italic">Quota Management</h2></header>
+      <header className="flex justify-between items-center">
+        <h2 className="text-4xl font-black text-slate-800 uppercase italic">Quota Management</h2>
+        <label className="bg-emerald-600 text-white px-6 py-3 rounded-2xl font-black text-xs cursor-pointer shadow-lg hover:bg-emerald-700 flex items-center gap-2">
+          <Upload size={14} /> Import Targets CSV
+          <input type="file" className="hidden" accept=".csv" onChange={handleCSVUpload} />
+        </label>
+      </header>
+      
+      {status && <div className="bg-emerald-50 text-emerald-700 p-4 rounded-2xl font-bold text-sm text-center border border-emerald-100">{status}</div>}
+
       <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-xl space-y-6 max-w-2xl">
-        <h3 className="font-black text-xs uppercase tracking-widest text-slate-400">Update Monthly Goal</h3>
+        <h3 className="font-black text-xs uppercase tracking-widest text-slate-400">Manual Update</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <select className="border-2 border-slate-50 p-4 rounded-xl font-bold bg-slate-50 text-sm" value={editTarget.shop} onChange={e => setEditTarget({...editTarget, shop: e.target.value})}>
             <option value="">Select Shop</option>
@@ -522,7 +682,7 @@ function TargetSetting({ shops, areaManagers, targets }) {
   );
 }
 
-// --- TEAM MANAGEMENT (RESTORED) ---
+// --- TEAM MANAGEMENT ---
 function UserSearch({ users, managers }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [editingId, setEditingId] = useState(null);
@@ -531,6 +691,12 @@ function UserSearch({ users, managers }) {
   const handleUpdate = async (uid) => {
     await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', uid), editForm);
     setEditingId(null);
+  };
+
+  const handleDeleteUser = async (uid) => {
+    if (confirm("Permanently delete this user profile? Data associated with this UID will be lost.")) {
+      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', uid));
+    }
   };
 
   const filtered = users.filter(u => u.username?.toLowerCase().includes(searchTerm.toLowerCase()));
@@ -544,14 +710,17 @@ function UserSearch({ users, managers }) {
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
         {filtered.map(u => (
-          <div key={u.uid} className="bg-white p-6 rounded-[2.5rem] border border-slate-200 shadow-xl flex flex-col gap-4">
+          <div key={u.uid} className="bg-white p-6 rounded-[2.5rem] border border-slate-200 shadow-xl flex flex-col gap-4 group">
             <div className="flex items-center gap-4">
               <div className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center font-black text-slate-400 uppercase text-xl">{u.username?.charAt(0)}</div>
               <div className="flex-1">
                 <p className="font-black text-slate-800 text-lg">{u.username}</p>
                 <span className={`text-[10px] font-black uppercase tracking-widest ${u.role === 'admin' ? 'text-purple-600' : 'text-slate-400'}`}>{u.role}</span>
               </div>
-              <button onClick={() => { setEditingId(u.uid); setEditForm({ username: u.username, role: u.role, assignedManager: u.assignedManager || '' }); }} className="text-slate-400 hover:text-red-600"><UserCog size={18} /></button>
+              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button onClick={() => { setEditingId(u.uid); setEditForm({ username: u.username, role: u.role, assignedManager: u.assignedManager || '' }); }} className="text-slate-400 hover:text-red-600 p-2"><UserCog size={18} /></button>
+                <button onClick={() => handleDeleteUser(u.uid)} className="text-slate-400 hover:text-red-500 p-2"><Trash2 size={18} /></button>
+              </div>
             </div>
             {editingId === u.uid ? (
               <div className="space-y-3 p-4 bg-slate-50 rounded-2xl">
@@ -572,7 +741,7 @@ function UserSearch({ users, managers }) {
   );
 }
 
-// --- SYSTEM ADMIN (RESTORED) ---
+// --- SYSTEM ADMIN ---
 function AdminDashboard({ areaManagers, shops, targets }) {
   const [newManager, setNewManager] = useState('');
   const [newShop, setNewShop] = useState('');
@@ -637,13 +806,19 @@ function LoginPortal() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#0F172A] p-4">
       <div className="w-full max-w-md bg-white rounded-[3rem] p-12 shadow-2xl text-center">
-        <h1 className="text-4xl font-black text-slate-800 italic uppercase mb-2">Portal</h1>
+        <h1 className="text-4xl font-black text-slate-800 italic uppercase mb-2 tracking-tighter">Portal</h1>
         <p className="text-slate-400 font-bold text-[10px] uppercase tracking-widest mb-10 italic">
           {isSignUp ? 'Create New Account' : 'Secure Sales Entry'}
         </p>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <input required type="email" placeholder="Email" className="w-full bg-slate-50 p-4 rounded-2xl font-bold outline-none" value={email} onChange={e => setEmail(e.target.value)} />
-          <input required type="password" placeholder="Password" className="w-full bg-slate-50 p-4 rounded-2xl font-bold outline-none" value={password} onChange={e => setPassword(e.target.value)} />
+        <form onSubmit={handleSubmit} className="space-y-4 text-left">
+          <div>
+            <label className="text-[10px] font-black uppercase text-slate-400 ml-2 mb-1 block">Email</label>
+            <input required type="email" placeholder="email@company.com" className="w-full bg-slate-50 p-4 rounded-2xl font-bold outline-none border border-slate-100 focus:border-red-500" value={email} onChange={e => setEmail(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-[10px] font-black uppercase text-slate-400 ml-2 mb-1 block">Password</label>
+            <input required type="password" placeholder="••••••••" className="w-full bg-slate-50 p-4 rounded-2xl font-bold outline-none border border-slate-100 focus:border-red-500" value={password} onChange={e => setPassword(e.target.value)} />
+          </div>
           {error && <div className="p-3 bg-red-50 text-red-500 rounded-xl text-xs font-bold border border-red-100">{error}</div>}
           <button disabled={loading} className="w-full bg-red-600 text-white py-5 rounded-2xl font-black shadow-xl hover:bg-red-700 transition-all">
             {loading ? <Loader2 className="animate-spin mx-auto" /> : (isSignUp ? 'CREATE ACCOUNT' : 'SIGN IN')}
@@ -690,7 +865,7 @@ function Navigation({ view, setView, role, onLogout }) {
   ];
   return (
     <nav className="hidden md:flex flex-col fixed left-0 top-0 bottom-0 w-64 bg-[#0F172A] text-slate-300 p-6 z-40 print:hidden">
-      <div className="mb-10 p-2 font-black italic text-2xl text-white">PORTAL</div>
+      <div className="mb-10 p-2 font-black italic text-2xl text-white tracking-tighter">PORTAL</div>
       <div className="space-y-1 flex-1">
         {links.map(link => link.roles.includes(role) && (
           <button key={link.id} onClick={() => setView(link.id)} className={`w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all ${view === link.id ? 'bg-red-600 text-white shadow-lg shadow-red-600/30' : 'hover:bg-slate-800'}`}>
