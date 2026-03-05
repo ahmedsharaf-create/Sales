@@ -174,7 +174,7 @@ export default function App() {
       <main className="p-4 md:p-8 max-w-[1600px] mx-auto">
         {view === 'dashboard' && <Dashboard records={salesRecords} targets={targets} shops={shops} managers={areaManagers} userProfile={userProfile} />}
         {view === 'collection' && <SalesCollectionForm areaManagers={areaManagers} shops={shops} user={user} db={db} appId={appId} userProfile={userProfile} />}
-        {view === 'reports' && <SalesList records={salesRecords} targets={targets} shops={shops} managers={areaManagers} role={userProfile?.role} db={db} appId={appId} />}
+        {view === 'reports' && <SalesList records={salesRecords} targets={targets} shops={shops} managers={areaManagers} role={userProfile?.role} db={db} appId={appId} userProfile={userProfile} />}
         {view === 'targets' && userProfile?.role === 'admin' && <TargetSetting shops={shops} areaManagers={areaManagers} targets={targets} db={db} appId={appId} />}
         {view === 'admin' && userProfile?.role === 'admin' && <AdminDashboard areaManagers={areaManagers} shops={shops} targets={targets} db={db} appId={appId} />}
         {view === 'userSearch' && userProfile?.role === 'admin' && <UserSearch users={allUsers} db={db} appId={appId} managers={areaManagers} />}
@@ -481,18 +481,87 @@ function SalesCollectionForm({ areaManagers, shops, user, db, appId, userProfile
 }
 
 // --- AUDIT TRAIL ---
-function SalesList({ records, targets, shops, managers, role, db, appId }) {
-  const [filterManager, setFilterManager] = useState('All');
+function SalesList({ records, targets, shops, managers, role, db, appId, userProfile }) {
+  const isAdmin = userProfile?.role === 'admin';
+  const assignedManager = userProfile?.assignedManager || '';
+
+  const [filterManager, setFilterManager] = useState(isAdmin ? 'All' : assignedManager);
+  const [filterShop, setFilterShop] = useState('All');
   const [startDate, setStartDate] = useState('');
-  const filtered = useMemo(() => { let data = [...records]; if (filterManager !== 'All') data = data.filter(r => r.areaManager === filterManager); if (startDate) data = data.filter(r => r.date === startDate); return data; }, [records, filterManager, startDate]);
+
+  const filtered = useMemo(() => { 
+    let data = [...records]; 
+    if (filterManager !== 'All') data = data.filter(r => r.areaManager === filterManager); 
+    if (filterShop !== 'All') data = data.filter(r => r.shopName === filterShop);
+    if (startDate) data = data.filter(r => r.date === startDate); 
+    return data; 
+  }, [records, filterManager, filterShop, startDate]);
+
+  const availableShopsForFilter = useMemo(() => {
+    if (filterManager === 'All') return shops;
+    return shops.filter(s => s.manager === filterManager);
+  }, [shops, filterManager]);
+
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center"><h2 className="text-3xl font-black text-slate-800 italic uppercase">Audit Trail</h2><input type="date" className="bg-white p-3 rounded-xl text-xs font-black shadow-sm outline-none" value={startDate} onChange={e => setStartDate(e.target.value)} /></div>
-      <div className="bg-white rounded-[2.5rem] shadow-xl overflow-hidden overflow-x-auto">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <h2 className="text-3xl font-black text-slate-800 italic uppercase">Audit Trail</h2>
+        <div className="flex flex-wrap gap-2 w-full md:w-auto">
+          <input 
+            type="date" 
+            className="bg-white p-3 rounded-xl text-xs font-black shadow-sm outline-none flex-1 md:flex-none" 
+            value={startDate} 
+            onChange={e => setStartDate(e.target.value)} 
+          />
+          {isAdmin && (
+            <select 
+              value={filterManager} 
+              onChange={e => { setFilterManager(e.target.value); setFilterShop('All'); }} 
+              className="bg-white p-3 rounded-xl text-xs font-black uppercase tracking-widest shadow-sm outline-none flex-1 md:flex-none"
+            >
+              <option value="All">All Managers</option>
+              {managers.map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+          )}
+          <select 
+            value={filterShop} 
+            onChange={e => setFilterShop(e.target.value)} 
+            className="bg-white p-3 rounded-xl text-xs font-black uppercase tracking-widest shadow-sm outline-none flex-1 md:flex-none"
+          >
+            <option value="All">All Shops</option>
+            {availableShopsForFilter.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
+          </select>
+        </div>
+      </div>
+      <div className="bg-white rounded-[2.5rem] shadow-xl overflow-hidden overflow-x-auto border border-slate-100">
         <table className="w-full text-left">
-          <thead className="bg-[#0F172A] text-slate-400 text-[10px] font-black uppercase tracking-widest"><tr className="tracking-widest"><th className="px-8 py-6">Time Stamp</th><th className="px-8 py-6">Date</th><th className="px-8 py-6 text-center">GA Ach</th><th className="px-8 py-6 text-center">% Completion</th><th className="px-8 py-6 text-center">OC Ach</th><th className="px-8 py-6 text-center">Hours Worked</th>{role === 'admin' && <th className="px-8 py-6 text-right">Actions</th>}</tr></thead>
+          <thead className="bg-[#0F172A] text-slate-400 text-[10px] font-black uppercase tracking-widest">
+            <tr className="tracking-widest">
+              <th className="px-8 py-6">Time Stamp</th>
+              <th className="px-8 py-6">Date</th>
+              <th className="px-8 py-6">Area Manager</th>
+              <th className="px-8 py-6">Shop Name</th>
+              <th className="px-8 py-6 text-center">GA Ach</th>
+              <th className="px-8 py-6 text-center">% Completion</th>
+              <th className="px-8 py-6 text-center">OC Ach</th>
+              <th className="px-8 py-6 text-center">Hours Worked</th>
+              {role === 'admin' && <th className="px-8 py-6 text-right">Actions</th>}
+            </tr>
+          </thead>
           <tbody className="divide-y divide-slate-50 font-bold tabular-nums">
-            {filtered.map(r => (<tr key={r.id} className="hover:bg-slate-50"><td className="px-8 py-5 text-slate-400 text-[10px]">{new Date(r.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td><td className="px-8 py-5 text-slate-700">{r.date}</td><td className="px-8 py-5 text-center text-red-600">+{r.gaAch}</td><td className="px-8 py-5 text-center text-[10px] text-red-700">{(targets[r.shopName]?.ga > 0 ? (r.gaAch / targets[r.shopName].ga * 100).toFixed(1) : 0)}%</td><td className="px-8 py-5 text-center text-blue-600">+{r.ocAch}</td><td className="px-8 py-5 text-center text-slate-400 text-[10px]">{r.workingHours}h</td>{role === 'admin' && <td className="px-8 py-5 text-right"><button onClick={async () => { if(confirm("Delete?")) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sales', r.id)); }} className="text-slate-200 hover:text-red-500"><Trash2 size={16} /></button></td>}</tr>))}
+            {filtered.length === 0 ? (
+              <tr><td colSpan={role === 'admin' ? 9 : 8} className="px-8 py-10 text-center text-slate-300 italic">No records found matching filters.</td></tr>
+            ) : filtered.map(r => (<tr key={r.id} className="hover:bg-slate-50 transition-colors">
+              <td className="px-8 py-5 text-slate-400 text-[10px]">{new Date(r.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
+              <td className="px-8 py-5 text-slate-700">{r.date}</td>
+              <td className="px-8 py-5 text-slate-800 font-black">{r.areaManager}</td>
+              <td className="px-8 py-5 text-slate-500 italic">{r.shopName}</td>
+              <td className="px-8 py-5 text-center text-red-600">+{r.gaAch}</td>
+              <td className="px-8 py-5 text-center text-[10px] text-red-700">{(targets[r.shopName]?.ga > 0 ? (r.gaAch / targets[r.shopName].ga * 100).toFixed(1) : 0)}%</td>
+              <td className="px-8 py-5 text-center text-blue-600">+{r.ocAch}</td>
+              <td className="px-8 py-5 text-center text-slate-400 text-[10px]">{r.workingHours}h</td>
+              {role === 'admin' && <td className="px-8 py-5 text-right"><button onClick={async () => { if(confirm("Delete record?")) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sales', r.id)); }} className="text-slate-200 hover:text-red-500 transition-colors"><Trash2 size={16} /></button></td>}
+            </tr>))}
           </tbody>
         </table>
       </div>
@@ -653,7 +722,7 @@ function MobileNav({ view, setView, role }) {
 function LoadingScreen() { return ( <div className="flex h-screen items-center justify-center bg-slate-50"><div className="text-center"><Loader2 className="w-12 h-12 animate-spin text-red-600 mx-auto mb-4" /><p className="text-slate-500 font-black text-xs uppercase tracking-widest">Processing Cloud Assets...</p></div></div> ); }
 function Onboarding({ user, setView, setUserProfile }) {
   const [name, setName] = useState(''); const handleSave = async () => { if (!name.trim()) return; const profile = { username: name, role: 'user', assignedManager: '', createdAt: Date.now() }; await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid), profile); setUserProfile(profile); setView('dashboard'); };
-  return ( <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC] p-4"><div className="w-full max-w-md bg-white rounded-[3rem] p-10 shadow-xl text-center"><h2 className="text-2xl font-black text-slate-800 mb-8 italic">Profile Setup</h2><input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Full Name" className="w-full bg-slate-50 p-5 rounded-2xl font-bold mb-6 text-center text-xl outline-none" /><button onClick={handleSave} className="w-full bg-red-600 text-white py-5 rounded-2xl font-black text-lg">Continue</button></div></div> );
+  return ( <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC] p-4"><div className="w-full max-w-md bg-white rounded-[3rem] p-10 shadow-xl text-center"><h2 className="text-2xl font-black text-slate-800 mb-8 italic">Profile Setup</h2><input type="text" value={name} onChange={e => setName(name.target.value)} placeholder="Full Name" className="w-full bg-slate-50 p-5 rounded-2xl font-bold mb-6 text-center text-xl outline-none" /><button onClick={handleSave} className="w-full bg-red-600 text-white py-5 rounded-2xl font-black text-lg">Continue</button></div></div> );
 }
 const styleTag = document.createElement('style');
 styleTag.innerHTML = `@media print { .no-print { display: none !important; } body { background: white !important; padding: 0 !important; margin: 0 !important; } main { margin: 0 !important; padding: 0 !important; width: 100% !important; max-width: 100% !important; } .md\\:pl-64 { padding-left: 0 !important; } nav { display: none !important; } .rounded-\\[2\\.5rem\\], .rounded-\\[3rem\\] { border-radius: 0 !important; border: 1px solid #eee !important; } } .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; } .custom-scrollbar::-webkit-scrollbar-thumb { background: #E2E8F0; border-radius: 10px; }`;
