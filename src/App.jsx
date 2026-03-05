@@ -17,8 +17,7 @@ import {
   createUserWithEmailAndPassword,
   onAuthStateChanged,
   signOut,
-  signInWithCustomToken,
-  signInAnonymously
+  signInWithCustomToken
 } from 'firebase/auth';
 import { 
   PlusCircle, 
@@ -53,11 +52,10 @@ import {
 } from 'lucide-react';
 
 // --- Firebase Configuration ---
-// Note: apiKey must be an empty string; the environment provides the valid key at runtime.
 const firebaseConfig = typeof __firebase_config !== 'undefined' 
   ? JSON.parse(__firebase_config) 
   : {
-      apiKey: "",
+      apiKey: "AIzaSyAYb6zn5YulU9Ght-3T2vHFdbOL94GYqs",
       authDomain: "pyramids-sales.firebaseapp.com",
       projectId: "pyramids-sales",
       storageBucket: "pyramids-sales.firebasestorage.app",
@@ -66,9 +64,15 @@ const firebaseConfig = typeof __firebase_config !== 'undefined'
       measurementId: "G-MMZ18E15FX"
     };
 
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
+let app, auth, db;
+try {
+  app = initializeApp(firebaseConfig);
+  auth = getAuth(app);
+  db = getFirestore(app);
+} catch (e) {
+  console.error("Firebase initialization error:", e);
+}
+
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'pyramids-sales-v1';
 
 // --- Custom SVG Chart Components ---
@@ -129,16 +133,11 @@ export default function App() {
   const [allUsers, setAllUsers] = useState([]);
 
   useEffect(() => {
+    if (!auth) return;
+
     const initAuth = async () => {
-      try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else if (!auth.currentUser) {
-          // Attempt anonymous sign in if no user is present to ensure rules pass
-          await signInAnonymously(auth);
-        }
-      } catch (err) {
-        console.error("Authentication failed:", err);
+      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+        await signInWithCustomToken(auth, __initial_auth_token);
       }
     };
     initAuth();
@@ -168,7 +167,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!user || !userProfile) return;
+    if (!user || !userProfile || !db) return;
 
     const settingsRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config');
     const unsubSettings = onSnapshot(settingsRef, (docSnap) => {
@@ -178,7 +177,7 @@ export default function App() {
         setShops(data.shops || []);
         setTargets(data.targets || {});
       }
-    }, (err) => console.error("Settings listener error:", err));
+    });
 
     const salesRef = collection(db, 'artifacts', appId, 'public', 'data', 'sales');
     const unsubSales = onSnapshot(salesRef, (snapshot) => {
@@ -191,21 +190,16 @@ export default function App() {
         const assigned = userProfile.assignedManager;
         setSalesRecords(sorted.filter(r => r.areaManager === assigned || r.submittedBy === user.uid));
       }
-    }, (err) => console.error("Sales listener error:", err));
+    });
 
-    let unsubUsers = () => {};
     if (userProfile.role === 'admin') {
       const usersRef = collection(db, 'artifacts', appId, 'public', 'data', 'users');
-      unsubUsers = onSnapshot(usersRef, (snapshot) => {
+      onSnapshot(usersRef, (snapshot) => {
         setAllUsers(snapshot.docs.map(d => ({ uid: d.id, ...d.data() })));
-      }, (err) => console.error("Users listener error:", err));
+      });
     }
 
-    return () => { 
-      unsubSettings(); 
-      unsubSales(); 
-      unsubUsers();
-    };
+    return () => { unsubSettings(); unsubSales(); };
   }, [user, userProfile]);
 
   const handleLogout = () => signOut(auth);
@@ -494,7 +488,6 @@ function SalesCollectionForm({ areaManagers, shops, user, userProfile }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!user) return;
     setSubmitting(true);
     try {
       await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'sales'), { 
