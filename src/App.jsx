@@ -542,7 +542,7 @@ function SalesList({ records, targets, shops, managers, role, db, appId, userPro
               <th className="px-8 py-6">Area Manager</th>
               <th className="px-8 py-6">Shop Name</th>
               <th className="px-8 py-6 text-center">GA Ach</th>
-              <th className="px-8 py-6 text-center">% Completion</th>
+              <th className="px-8 py-6 text-center">GA % </th>
               <th className="px-8 py-6 text-center">OC Ach</th>
               <th className="px-8 py-6 text-center">Hours Worked</th>
               {role === 'admin' && <th className="px-8 py-6 text-right">Actions</th>}
