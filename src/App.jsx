@@ -187,7 +187,7 @@ export default function App() {
 // --- DASHBOARD ---
 function Dashboard({ records, targets, shops, managers, userProfile }) {
   const isAdmin = userProfile?.role === 'admin';
-  const assignedManager = userProfile?.assignedManager || 'All';
+  const assignedManager = userProfile?.assignedManager || '';
   const [filterManager, setFilterManager] = useState(isAdmin ? 'All' : assignedManager);
   const [selectedManager, setSelectedManager] = useState(null);
   
@@ -197,36 +197,43 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
   const filteredRecords = useMemo(() => {
     let data = [...records];
     const managerToFilter = isAdmin ? filterManager : assignedManager;
-    if (managerToFilter !== 'All') data = data.filter(r => r.areaManager === managerToFilter);
+    if (managerToFilter && managerToFilter !== 'All') {
+      data = data.filter(r => r.areaManager === managerToFilter);
+    }
     return data;
   }, [records, filterManager, isAdmin, assignedManager]);
 
   const managerSummary = useMemo(() => {
     const summary = {};
-    managers.forEach(m => {
+    // Only show assigned manager for normal users, or all for admins
+    const activeManagers = isAdmin ? managers : managers.filter(m => m === assignedManager);
+
+    activeManagers.forEach(m => {
       summary[m] = { 
         name: m, totalGA: 0, totalOC: 0, entryCount: 0, totalHours: 0,
         targetGA: 0, targetOC: 0, lastActivity: null 
       };
     });
+
     shops.forEach(s => {
       if (summary[s.manager]) {
         summary[s.manager].targetGA += (targets[s.name]?.ga || 0);
         summary[s.manager].targetOC += (targets[s.name]?.oc || 0);
       }
     });
+
     filteredRecords.forEach(r => {
       if (summary[r.areaManager]) {
         summary[r.areaManager].totalGA += (r.gaAch || 0);
         summary[r.areaManager].totalOC += (r.ocAch || 0);
         summary[r.areaManager].entryCount += 1;
-        // Direct addition of numeric hours
         summary[r.areaManager].totalHours += parseFloat(r.workingHours || 0);
         if (!summary[r.areaManager].lastActivity || r.timestamp > summary[r.areaManager].lastActivity) {
           summary[r.areaManager].lastActivity = r.timestamp;
         }
       }
     });
+
     return Object.values(summary).map(m => ({
       ...m,
       avgHours: m.entryCount > 0 ? (m.totalHours / m.entryCount).toFixed(1) : 0,
@@ -234,7 +241,7 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
       remainingGA: Math.max(0, m.targetGA - m.totalGA),
       completionOC: m.targetOC > 0 ? ((m.totalOC / m.targetOC) * 100).toFixed(1) : 0
     }));
-  }, [filteredRecords, managers, shops, targets]);
+  }, [filteredRecords, managers, shops, targets, isAdmin, assignedManager]);
 
   const filteredManagerSummary = useMemo(() => {
     return managerSummary.filter(m => {
@@ -266,11 +273,18 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
 
   const operationalStats = useMemo(() => {
     const today = new Date().toISOString().split('T')[0];
+    const relevantShops = isAdmin ? shops : shops.filter(s => s.manager === assignedManager);
     const activeShopNamesToday = [...new Set(records.filter(r => r.date === today).map(r => r.shopName))];
+    
     const totalGA = filteredRecords.reduce((acc, r) => acc + (r.gaAch || 0), 0);
     const totalOC = filteredRecords.reduce((acc, r) => acc + (r.ocAch || 0), 0);
-    return { totalGA, totalOC, closedShopsToday: Math.max(0, shops.length - activeShopNamesToday.length) };
-  }, [records, shops, filteredRecords]);
+    
+    return { 
+      totalGA, 
+      totalOC, 
+      closedShopsToday: Math.max(0, relevantShops.length - activeShopNamesToday.filter(name => relevantShops.some(s => s.name === name)).length) 
+    };
+  }, [records, shops, filteredRecords, isAdmin, assignedManager]);
 
   const exportSummaryExcel = () => {
     const headers = ['Manager', 'GA Target', 'GA Ach.', 'GA %', 'GA Remaining', 'OC Target', 'OC Ach.', 'OC %', 'Avg Hours'];
@@ -292,16 +306,42 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 no-print">
         <div className="flex items-center gap-3">
           <div className="p-3 bg-red-600 rounded-2xl shadow-lg shadow-red-200"><LayoutDashboard className="text-white" size={24} /></div>
-          <div><h2 className="text-2xl font-black text-slate-800 tracking-tight italic">Performance Hub</h2></div>
+          <div>
+            <h2 className="text-2xl font-black text-slate-800 tracking-tight italic">
+              {isAdmin ? "Performance Hub" : "Your Performance"}
+            </h2>
+          </div>
         </div>
+        {isAdmin && (
+           <div className="flex items-center gap-2">
+             <span className="text-[10px] font-black uppercase text-slate-400">View Region:</span>
+             <select 
+               value={filterManager} 
+               onChange={e => setFilterManager(e.target.value)} 
+               className="text-xs font-black uppercase tracking-widest p-3 bg-white border border-slate-100 rounded-xl shadow-sm outline-none cursor-pointer"
+             >
+               <option value="All">All Regions</option>
+               {managers.map(m => <option key={m} value={m}>{m}</option>)}
+             </select>
+           </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 no-print">
         <div className="lg:col-span-2 bg-white rounded-[2.5rem] shadow-sm border border-slate-100 overflow-hidden">
-          <div className="p-6 border-b border-slate-50 flex justify-between items-center"><h3 className="font-black text-slate-800 text-xs uppercase tracking-widest flex items-center gap-2"><Clock size={16} className="text-red-500" /> Latest Activity</h3></div>
+          <div className="p-6 border-b border-slate-50 flex justify-between items-center"><h3 className="font-black text-slate-800 text-xs uppercase tracking-widest flex items-center gap-2"><Clock size={16} className="text-red-500" /> {isAdmin ? "Latest Activity" : "Recent Submissions"}</h3></div>
           <table className="w-full text-left">
             <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400"><tr className="tracking-widest"><th className="px-6 py-4">Area Manager</th><th className="px-6 py-4">Last Sales Date & Time</th></tr></thead>
-            <tbody className="divide-y divide-slate-50">{managerSummary.map((m, i) => (<tr key={i} className="hover:bg-slate-50 transition-colors"><td className="px-6 py-4 font-black text-slate-700">{m.name}</td><td className="px-6 py-4 font-bold text-slate-400">{m.lastActivity ? `${new Date(m.lastActivity).toLocaleDateString()} ${new Date(m.lastActivity).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : '--'}</td></tr>))}</tbody>
+            <tbody className="divide-y divide-slate-50">
+              {managerSummary.length === 0 ? (
+                <tr><td colSpan="2" className="px-6 py-8 text-center text-slate-300 font-bold italic">No active data for this region.</td></tr>
+              ) : managerSummary.map((m, i) => (
+                <tr key={i} className="hover:bg-slate-50 transition-colors">
+                  <td className="px-6 py-4 font-black text-slate-700">{m.name}</td>
+                  <td className="px-6 py-4 font-bold text-slate-400">{m.lastActivity ? `${new Date(m.lastActivity).toLocaleDateString()} ${new Date(m.lastActivity).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : '--'}</td>
+                </tr>
+              ))}
+            </tbody>
           </table>
         </div>
         <div className="space-y-4">
@@ -323,7 +363,9 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
       <div className="bg-white rounded-[2.5rem] shadow-sm border border-slate-100 overflow-hidden">
         <div className="p-8 border-b border-slate-50 space-y-6">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-            <h3 className="font-black text-slate-800 text-lg tracking-tight">Manager Performance Summary</h3>
+            <h3 className="font-black text-slate-800 text-lg tracking-tight">
+              {isAdmin ? "Manager Performance Summary" : "Regional Performance Summary"}
+            </h3>
             <div className="flex items-center gap-2 no-print">
               <button onClick={exportSummaryExcel} className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-600 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-emerald-100 transition-all">
                 <FileSpreadsheet size={16} /> Export Excel
@@ -333,18 +375,20 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
               </button>
             </div>
           </div>
-          <div className="flex flex-wrap gap-4 no-print border-t pt-6 border-slate-50">
-             <div className="relative flex-1 min-w-[200px]">
-                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" />
-                <input type="text" placeholder="Search manager..." className="w-full pl-9 pr-4 py-3 bg-slate-50 border-none rounded-xl text-xs font-bold outline-none" value={tableSearch} onChange={e => setTableSearch(e.target.value)}/>
-             </div>
-             <select className="px-4 py-3 bg-slate-50 border-none rounded-xl text-[10px] font-black uppercase tracking-widest outline-none" value={performanceFilter} onChange={e => setPerformanceFilter(e.target.value)}>
-                <option value="All">All Performance</option>
-                <option value="Full">Achieved (100%+)</option>
-                <option value="Good">In Progress (50-99%)</option>
-                <option value="Under">Critical (&lt;50%)</option>
-             </select>
-          </div>
+          {isAdmin && (
+            <div className="flex flex-wrap gap-4 no-print border-t pt-6 border-slate-50">
+               <div className="relative flex-1 min-w-[200px]">
+                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" />
+                  <input type="text" placeholder="Search manager..." className="w-full pl-9 pr-4 py-3 bg-slate-50 border-none rounded-xl text-xs font-bold outline-none" value={tableSearch} onChange={e => setTableSearch(e.target.value)}/>
+               </div>
+               <select className="px-4 py-3 bg-slate-50 border-none rounded-xl text-[10px] font-black uppercase tracking-widest outline-none" value={performanceFilter} onChange={e => setPerformanceFilter(e.target.value)}>
+                  <option value="All">All Performance</option>
+                  <option value="Full">Achieved (100%+)</option>
+                  <option value="Good">In Progress (50-99%)</option>
+                  <option value="Under">Critical (&lt;50%)</option>
+               </select>
+            </div>
+          )}
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left">
@@ -352,7 +396,9 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
               <tr><th className="px-8 py-5">Area Manager</th><th className="px-4 py-5 text-center">GA Target</th><th className="px-4 py-5 text-center">GA Ach.</th><th className="px-4 py-5 text-center">%</th><th className="px-4 py-5 text-center">Remaining</th><th className="px-4 py-5 text-center">OC Target</th><th className="px-4 py-5 text-center">OC Ach.</th><th className="px-4 py-5 text-center">%</th><th className="px-8 py-5 text-center">AVG Hours</th></tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
-              {filteredManagerSummary.map((m, idx) => (
+              {filteredManagerSummary.length === 0 ? (
+                <tr><td colSpan="9" className="px-8 py-10 text-center text-slate-300 italic font-bold">No performance records found.</td></tr>
+              ) : filteredManagerSummary.map((m, idx) => (
                 <React.Fragment key={idx}>
                   <tr onClick={() => setSelectedManager(selectedManager === m.name ? null : m.name)} className={`cursor-pointer transition-colors ${selectedManager === m.name ? 'bg-red-50' : 'hover:bg-slate-50'}`}>
                     <td className="px-8 py-5 font-black text-slate-700 flex items-center gap-2">{selectedManager === m.name ? <ChevronDown size={14} className="text-red-500" /> : <ChevronRight size={14} className="text-slate-300" />}{m.name}</td>
