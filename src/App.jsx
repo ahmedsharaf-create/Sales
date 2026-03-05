@@ -81,7 +81,7 @@ try {
   console.error("Firebase init error:", e);
 }
 
-const appId = 'pyramids-sales-v1';
+const appId = 'cashshop-sales-v1';
 
 // --- Helper Functions ---
 
@@ -600,7 +600,7 @@ function LoadingScreen() {
     <div className="flex h-screen items-center justify-center bg-slate-50">
       <div className="text-center">
         <Loader2 className="w-12 h-12 animate-spin text-red-600 mx-auto mb-4" />
-        <p className="text-slate-500 font-bold tracking-tighter">PE Systems Cloud...</p>
+        <p className="text-slate-500 font-bold tracking-tighter">CashShop Systems Cloud...</p>
       </div>
     </div>
   );
@@ -646,7 +646,7 @@ function LoginPortal() {
           <div className="inline-flex p-4 bg-slate-50 rounded-3xl mb-4">
             {authMode === 'forgot' ? <KeyRound size={32} className="text-red-600" /> : <ShieldCheck size={32} className="text-red-600" />}
           </div>
-          <h1 className="text-3xl font-black text-slate-800 tracking-tighter italic">PE Sales</h1>
+          <h1 className="text-3xl font-black text-slate-800 tracking-tighter italic">CashShop Sales</h1>
           <p className="text-slate-400 font-bold text-[10px] uppercase tracking-[0.3em] mt-2">
             {authMode === 'forgot' ? 'Credential Recovery' : 'Salesforce Portal'}
           </p>
@@ -746,8 +746,8 @@ function Navigation({ view, setView, role, onLogout }) {
   return (
     <nav className="hidden md:flex flex-col fixed left-0 top-0 bottom-0 w-64 bg-[#0F172A] text-slate-300 p-8 z-40">
       <div className="mb-14 flex items-center gap-3">
-        <div className="w-10 h-10 bg-red-600 rounded-2xl flex items-center justify-center font-black text-white text-xl shadow-lg italic">PE</div>
-        <h1 className="text-xl font-black text-white tracking-tighter uppercase italic">Sales</h1>
+        <div className="w-10 h-10 bg-red-600 rounded-2xl flex items-center justify-center font-black text-white text-xl shadow-lg italic">CS</div>
+        <h1 className="text-xl font-black text-white tracking-tighter uppercase italic">CashShop</h1>
       </div>
       <div className="space-y-2 flex-1">
         {links.map(link => link.roles.includes(role) && (
