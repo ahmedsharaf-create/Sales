@@ -114,7 +114,13 @@ export default function App() {
         if (userDoc.exists()) {
           const data = userDoc.data();
           setUserProfile(data);
-          setView('dashboard');
+          // Check if the user is authorized to enter the system
+          // New users wait until an admin assigns them a manager or role
+          if (data.role !== 'admin' && !data.assignedManager) {
+            setView('waiting');
+          } else {
+            setView('dashboard');
+          }
         } else {
           setView('onboarding');
         }
@@ -167,6 +173,7 @@ export default function App() {
   if (loading) return <LoadingScreen />;
   if (view === 'login') return <LoginPortal />;
   if (view === 'onboarding') return <Onboarding user={user} setView={setView} setUserProfile={setUserProfile} />;
+  if (view === 'waiting') return <WaitingRoom onLogout={handleLogout} />;
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-slate-900 font-sans pb-20 md:pb-0 md:pl-64">
@@ -180,6 +187,41 @@ export default function App() {
         {view === 'userSearch' && userProfile?.role === 'admin' && <UserSearch users={allUsers} db={db} appId={appId} managers={areaManagers} />}
       </main>
       <MobileNav view={view} setView={setView} role={userProfile?.role} />
+    </div>
+  );
+}
+
+// --- WAITING ROOM ---
+function WaitingRoom({ onLogout }) {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-[#0F172A] p-4 text-center">
+      <div className="max-w-md w-full bg-white rounded-[3rem] p-12 shadow-2xl space-y-8 animate-in fade-in zoom-in duration-500">
+        <div className="flex justify-center">
+          <div className="p-4 bg-red-50 rounded-full">
+            <ShieldCheck className="text-red-600" size={60} />
+          </div>
+        </div>
+        <div className="space-y-4">
+          <h2 className="text-2xl font-black text-slate-800 italic tracking-tighter leading-tight">
+            Welcome to the Cash Shops Sales System
+          </h2>
+          <p className="text-slate-500 font-bold leading-relaxed">
+            Please Contact The System Admin <br/> 
+            <span className="text-red-600 font-black text-lg">( Ahmed Sharaf )</span>
+          </p>
+        </div>
+        <div className="pt-6 border-t border-slate-100">
+          <p className="text-slate-400 font-black italic uppercase tracking-[0.2em] text-xs">
+            ONE Team One Goal
+          </p>
+        </div>
+        <button 
+          onClick={onLogout}
+          className="w-full flex items-center justify-center gap-2 text-slate-400 hover:text-red-600 font-black text-[10px] uppercase tracking-widest transition-all pt-4 border-none bg-transparent cursor-pointer"
+        >
+          <LogOut size={16} /> Logout and Check Later
+        </button>
+      </div>
     </div>
   );
 }
@@ -558,11 +600,11 @@ function TargetSetting({ shops, areaManagers, targets, db, appId }) {
       <div className="flex justify-between items-center"><h2 className="text-3xl font-black uppercase italic">Monthly Targets</h2><label className="bg-red-600 text-white px-5 py-3 rounded-2xl text-[10px] font-black cursor-pointer uppercase shadow-lg"><Upload size={14} className="inline mr-2" /> Upload CSV<input type="file" className="hidden" accept=".csv" onChange={handleCSVUpload} /></label></div>
       <div className="bg-white rounded-[2.5rem] shadow-xl overflow-hidden border border-slate-100">
         <table className="w-full text-left">
-          <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400"><tr><th className="px-8 py-5">Shop Name</th><th className="px-8 py-5 text-center">GA Target</th><th className="px-8 py-5 text-center">OC Target</th><th className="px-8 py-5 text-right">Actions</th></tr></thead>
+          <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400"><tr><th className="px-8 py-5">Shop Name</th><th className="px-4 py-5 text-center">GA Target</th><th className="px-4 py-5 text-center">OC Target</th><th className="px-8 py-5 text-right">Actions</th></tr></thead>
           <tbody className="divide-y divide-slate-50">
             {shops.map(shop => (<tr key={shop.name} className="hover:bg-slate-50 transition-colors"><td className="px-8 py-5 font-black text-slate-800 text-lg">{shop.name}</td>
-              <td className="px-8 py-5 text-center font-black text-red-600">{editingShop === shop.name ? <input type="number" className="w-20 bg-slate-50 p-2 text-center" value={editForm.ga} onChange={e => setEditForm({...editForm, ga: e.target.value})} /> : (targets[shop.name]?.ga || 0)}</td>
-              <td className="px-8 py-5 text-center font-black text-blue-600">{editingShop === shop.name ? <input type="number" className="w-20 bg-slate-50 p-2 text-center" value={editForm.oc} onChange={e => setEditForm({...editForm, oc: e.target.value})} /> : (targets[shop.name]?.oc || 0)}</td>
+              <td className="px-4 py-5 text-center font-black text-red-600">{editingShop === shop.name ? <input type="number" className="w-20 bg-slate-50 p-2 text-center" value={editForm.ga} onChange={e => setEditForm({...editForm, ga: e.target.value})} /> : (targets[shop.name]?.ga || 0)}</td>
+              <td className="px-4 py-5 text-center font-black text-blue-600">{editingShop === shop.name ? <input type="number" className="w-20 bg-slate-50 p-2 text-center" value={editForm.oc} onChange={e => setEditForm({...editForm, oc: e.target.value})} /> : (targets[shop.name]?.oc || 0)}</td>
               <td className="px-8 py-5 text-right">{editingShop === shop.name ? <button onClick={async () => { const newTargets = { ...targets, [shop.name]: { ga: Number(editForm.ga), oc: Number(editForm.oc) } }; await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config'), { targets: newTargets, areaManagers, shops }, { merge: true }); setEditingShop(null); }} className="text-emerald-500"><Check /></button> : <button onClick={() => { setEditingShop(shop.name); setEditForm({ ga: targets[shop.name]?.ga || 0, oc: targets[shop.name]?.oc || 0 }); }} className="text-slate-300 hover:text-red-500"><Edit3 size={18} /></button>}</td>
             </tr>))}
           </tbody>
@@ -682,7 +724,15 @@ function MobileNav({ view, setView, role }) {
 }
 function LoadingScreen() { return ( <div className="flex h-screen items-center justify-center bg-slate-50"><div className="text-center"><Loader2 className="w-12 h-12 animate-spin text-red-600 mx-auto mb-4" /><p className="text-slate-500 font-black text-xs uppercase tracking-widest">Processing Cloud Assets...</p></div></div> ); }
 function Onboarding({ user, setView, setUserProfile }) {
-  const [name, setName] = useState(''); const handleSave = async () => { if (!name.trim()) return; const profile = { username: name, role: 'user', assignedManager: '', createdAt: Date.now() }; await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid), profile); setUserProfile(profile); setView('dashboard'); };
+  const [name, setName] = useState(''); 
+  const handleSave = async () => { 
+    if (!name.trim()) return; 
+    const profile = { username: name, role: 'user', assignedManager: '', createdAt: Date.now() }; 
+    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid), profile); 
+    setUserProfile(profile); 
+    // Instead of dashboard, send to waiting room
+    setView('waiting'); 
+  };
   return ( <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC] p-4"><div className="w-full max-w-md bg-white rounded-[3rem] p-10 shadow-xl text-center"><h2 className="text-2xl font-black text-slate-800 mb-8 italic">Profile Setup</h2><input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Full Name" className="w-full bg-slate-50 p-5 rounded-2xl font-bold mb-6 text-center text-xl outline-none" /><button onClick={handleSave} className="w-full bg-red-600 text-white py-5 rounded-2xl font-black text-lg">Continue</button></div></div> );
 }
 const styleTag = document.createElement('style');
