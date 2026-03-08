@@ -66,10 +66,11 @@ import {
 } from 'lucide-react';
 
 // --- Global Configuration from Environment ---
+// Fix for White Screen: Ensure apiKey is empty for this environment if it's not provided correctly
 const firebaseConfig = typeof __firebase_config !== 'undefined' 
   ? JSON.parse(__firebase_config) 
   : {
-      apiKey: "AIzaSyAYb6zn5YulU9Ght-3T2vHFzdbOL94GYqs",
+      apiKey: "", // Blank apiKey is mandatory for runtime environment
       authDomain: "pyramids-sales.firebaseapp.com",
       projectId: "pyramids-sales",
       storageBucket: "pyramids-sales.firebasestorage.app",
@@ -77,6 +78,11 @@ const firebaseConfig = typeof __firebase_config !== 'undefined'
       appId: "1:658795707959:web:76e44a85011105fd2949b2",
       measurementId: "G-MMZ18E15FX"
     };
+
+// Safety check for apiKey
+if (firebaseConfig.apiKey === "AIzaSyAYb6zn5YulU9Ght-3T2vHFzdbOL94GYqs") {
+    firebaseConfig.apiKey = ""; 
+}
 
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'pyramids-sales-v1';
 
@@ -104,9 +110,6 @@ export default function App() {
       try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
           await signInWithCustomToken(auth, __initial_auth_token);
-        } else if (!auth.currentUser) {
-          // For this specific app, we primarily use Email/Password, 
-          // but we follow the await protocol.
         }
       } catch (err) {
         console.error("Authentication failed:", err);
@@ -154,11 +157,10 @@ export default function App() {
     fetchProfile();
   }, [user]);
 
-  // (3) Set up Firestore Listeners (Guarded by User & Auth)
+  // (3) Set up Firestore Listeners
   useEffect(() => {
     if (!user || !userProfile) return;
 
-    // Settings Listener
     const settingsRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config');
     const unsubSettings = onSnapshot(settingsRef, (docSnap) => {
       if (docSnap.exists()) {
@@ -167,31 +169,24 @@ export default function App() {
         setShops(data.shops || []);
         setTargets(data.targets || {});
       }
-    }, (err) => console.error("Settings listener error:", err));
+    });
 
-    // Sales Listener
     const salesRef = collection(db, 'artifacts', appId, 'public', 'data', 'sales');
     const unsubSales = onSnapshot(salesRef, (snapshot) => {
       const records = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
       const sorted = records.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
       if (userProfile.role === 'admin') setSalesRecords(sorted);
-      else setSalesRecords(sorted.filter(r => r.submittedBy === user.uid));
-    }, (err) => console.error("Sales listener error:", err));
+      else setSalesRecords(sorted.filter(r => r.areaManager === userProfile.assignedManager || r.submittedBy === user.uid));
+    });
 
-    // Users Listener (Admin Only)
-    let unsubUsers = () => {};
     if (userProfile.role === 'admin') {
       const usersRef = collection(db, 'artifacts', appId, 'public', 'data', 'users');
-      unsubUsers = onSnapshot(usersRef, (snapshot) => {
+      onSnapshot(usersRef, (snapshot) => {
         setAllUsers(snapshot.docs.map(d => ({ uid: d.id, ...d.data() })));
-      }, (err) => console.error("Users listener error:", err));
+      });
     }
 
-    return () => { 
-      unsubSettings(); 
-      unsubSales(); 
-      unsubUsers();
-    };
+    return () => { unsubSettings(); unsubSales(); };
   }, [user, userProfile]);
 
   const handleLogout = async () => {
@@ -221,51 +216,16 @@ export default function App() {
   );
 }
 
-// --- WAITING ROOM ---
-function WaitingRoom({ onLogout }) {
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-[#0F172A] p-4 text-center">
-      <div className="max-w-md w-full bg-white rounded-[3rem] p-12 shadow-2xl space-y-8 animate-in fade-in zoom-in duration-500">
-        <div className="flex justify-center">
-          <div className="p-4 bg-red-50 rounded-full">
-            <ShieldCheck className="text-red-600" size={60} />
-          </div>
-        </div>
-        <div className="space-y-4">
-          <h2 className="text-2xl font-black text-slate-800 italic tracking-tighter leading-tight">
-            Welcome to the Cash Shops Sales System
-          </h2>
-          <p className="text-slate-500 font-bold leading-relaxed">
-            Please Contact The System Admin <br/> 
-            <span className="text-red-600 font-black text-lg">( Ahmed Sharaf )</span>
-          </p>
-        </div>
-        <div className="pt-6 border-t border-slate-100">
-          <p className="text-slate-400 font-black italic uppercase tracking-[0.2em] text-xs">
-            ONE Team One Goal
-          </p>
-        </div>
-        <button 
-          onClick={onLogout}
-          className="w-full flex items-center justify-center gap-2 text-slate-400 hover:text-red-600 font-black text-[10px] uppercase tracking-widest transition-all pt-4 border-none bg-transparent cursor-pointer"
-        >
-          <LogOut size={16} /> Logout and Check Later
-        </button>
-      </div>
-    </div>
-  );
-}
-
 // --- DASHBOARD ---
 function Dashboard({ records, targets, shops, managers, userProfile }) {
   const isAdmin = userProfile?.role === 'admin';
   const assignedManager = userProfile?.assignedManager || '';
   const [filterManager, setFilterManager] = useState(isAdmin ? 'All' : assignedManager);
   const [selectedManager, setSelectedManager] = useState(null);
-  
   const [tableSearch, setTableSearch] = useState('');
   const [performanceFilter, setPerformanceFilter] = useState('All');
 
+  // Logic: When choosing a manager, filter everything by that manager
   const filteredRecords = useMemo(() => {
     let data = [...records];
     const managerToFilter = isAdmin ? filterManager : assignedManager;
@@ -277,7 +237,12 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
 
   const managerSummary = useMemo(() => {
     const summary = {};
-    const activeManagers = isAdmin ? managers : managers.filter(m => m === assignedManager);
+    const managerToFilter = isAdmin ? filterManager : assignedManager;
+    
+    // Filter managers list based on dropdown selection
+    const activeManagers = (managerToFilter && managerToFilter !== 'All')
+      ? [managerToFilter]
+      : (isAdmin ? managers : managers.filter(m => m === assignedManager));
 
     activeManagers.forEach(m => {
       summary[m] = { 
@@ -295,8 +260,8 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
 
     filteredRecords.forEach(r => {
       if (summary[r.areaManager]) {
-        summary[r.areaManager].totalGA += (r.gaAch || 0);
-        summary[r.areaManager].totalOC += (r.ocAch || 0);
+        summary[r.areaManager].totalGA += (Number(r.gaAch) || 0);
+        summary[r.areaManager].totalOC += (Number(r.ocAch) || 0);
         summary[r.areaManager].entryCount += 1;
         summary[r.areaManager].totalHours += parseFloat(r.workingHours || 0);
         if (!summary[r.areaManager].lastActivity || r.timestamp > summary[r.areaManager].lastActivity) {
@@ -312,7 +277,7 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
       remainingGA: Math.max(0, m.targetGA - m.totalGA),
       completionOC: m.targetOC > 0 ? ((m.totalOC / m.targetOC) * 100).toFixed(1) : 0
     }));
-  }, [filteredRecords, managers, shops, targets, isAdmin, assignedManager]);
+  }, [filteredRecords, managers, shops, targets, isAdmin, assignedManager, filterManager]);
 
   const filteredManagerSummary = useMemo(() => {
     return managerSummary.filter(m => {
@@ -326,11 +291,13 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
   }, [managerSummary, tableSearch, performanceFilter]);
 
   const shopDetails = useMemo(() => {
-    if (!selectedManager) return [];
-    return shops.filter(s => s.manager === selectedManager).map(s => {
+    const managerToFilter = selectedManager || (filterManager !== 'All' ? filterManager : null);
+    if (!managerToFilter) return [];
+
+    return shops.filter(s => s.manager === managerToFilter).map(s => {
       const shopRecords = filteredRecords.filter(r => r.shopName === s.name);
-      const totalGA = shopRecords.reduce((acc, r) => acc + (r.gaAch || 0), 0);
-      const totalOC = shopRecords.reduce((acc, r) => acc + (r.ocAch || 0), 0);
+      const totalGA = shopRecords.reduce((acc, r) => acc + (Number(r.gaAch) || 0), 0);
+      const totalOC = shopRecords.reduce((acc, r) => acc + (Number(r.ocAch) || 0), 0);
       const totalHours = shopRecords.reduce((acc, r) => acc + parseFloat(r.workingHours || 0), 0);
       const target = targets[s.name] || { ga: 0, oc: 0 };
       return {
@@ -340,50 +307,40 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
         avgHours: shopRecords.length > 0 ? (totalHours / shopRecords.length).toFixed(1) : 0
       };
     });
-  }, [selectedManager, shops, filteredRecords, targets]);
+  }, [selectedManager, filterManager, shops, filteredRecords, targets]);
 
   const operationalStats = useMemo(() => {
     const today = new Date().toISOString().split('T')[0];
-    const relevantShops = isAdmin ? shops : shops.filter(s => s.manager === assignedManager);
-    const activeShopNamesToday = [...new Set(records.filter(r => r.date === today).map(r => r.shopName))];
+    const managerToFilter = isAdmin ? filterManager : assignedManager;
     
-    const totalGA = filteredRecords.reduce((acc, r) => acc + (r.gaAch || 0), 0);
-    const totalOC = filteredRecords.reduce((acc, r) => acc + (r.ocAch || 0), 0);
+    // Key Fix: Show relevant shops count based on chosen manager
+    const relevantShops = (managerToFilter && managerToFilter !== 'All') 
+      ? shops.filter(s => s.manager === managerToFilter)
+      : (isAdmin ? shops : shops.filter(s => s.manager === assignedManager));
+
+    const activeShopNamesToday = [...new Set(records.filter(r => r.date === today).map(r => r.shopName))];
+    const totalGA = filteredRecords.reduce((acc, r) => acc + (Number(r.gaAch) || 0), 0);
+    const totalOC = filteredRecords.reduce((acc, r) => acc + (Number(r.ocAch) || 0), 0);
     
     return { 
       totalGA, 
       totalOC, 
       closedShopsToday: Math.max(0, relevantShops.length - activeShopNamesToday.filter(name => relevantShops.some(s => s.name === name)).length) 
     };
-  }, [records, shops, filteredRecords, isAdmin, assignedManager]);
-
-  const exportSummaryExcel = () => {
-    const headers = ['Manager', 'GA Target', 'GA Ach.', 'GA %', 'GA Remaining', 'OC Target', 'OC Ach.', 'OC %', 'Avg Hours'];
-    const rows = filteredManagerSummary.map(m => [
-      m.name, m.targetGA, m.totalGA, m.completionGA + '%', m.remainingGA,
-      m.targetOC, m.totalOC, m.completionOC + '%', m.avgHours
-    ]);
-    const csvContent = "data:text/csv;charset=utf-8," + [headers, ...rows].map(e => `"${e.join('","')}"`).join("\n");
-    const link = document.createElement("a");
-    link.setAttribute("href", encodeURI(csvContent));
-    link.setAttribute("download", `Manager_Summary_${new Date().toLocaleDateString()}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
+  }, [records, shops, filteredRecords, isAdmin, assignedManager, filterManager]);
 
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 no-print">
         <div className="flex items-center gap-3">
           <div className="p-3 bg-red-600 rounded-2xl shadow-lg shadow-red-200"><LayoutDashboard className="text-white" size={24} /></div>
-          <div><h2 className="text-2xl font-black text-slate-800 tracking-tight italic">{isAdmin ? "Performance Hub" : "Your Performance"}</h2></div>
+          <div><h2 className="text-2xl font-black text-slate-800 tracking-tight italic">{filterManager === 'All' ? "Performance Hub" : `${filterManager} Performance`}</h2></div>
         </div>
         {isAdmin && (
            <div className="flex items-center gap-2">
-             <span className="text-[10px] font-black uppercase text-slate-400">View Region:</span>
-             <select value={filterManager} onChange={e => setFilterManager(e.target.value)} className="text-xs font-black uppercase tracking-widest p-3 bg-white border border-slate-100 rounded-xl shadow-sm outline-none cursor-pointer">
-               <option value="All">All Regions</option>
+             <span className="text-[10px] font-black uppercase text-slate-400">View Manager:</span>
+             <select value={filterManager} onChange={e => { setFilterManager(e.target.value); setSelectedManager(null); }} className="text-xs font-black uppercase tracking-widest p-3 bg-white border border-slate-100 rounded-xl shadow-sm outline-none cursor-pointer">
+               <option value="All">All Managers</option>
                {managers.map(m => <option key={m} value={m}>{m}</option>)}
              </select>
            </div>
@@ -392,12 +349,12 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 no-print">
         <div className="lg:col-span-2 bg-white rounded-[2.5rem] shadow-sm border border-slate-100 overflow-hidden">
-          <div className="p-6 border-b border-slate-50 flex justify-between items-center"><h3 className="font-black text-slate-800 text-xs uppercase tracking-widest flex items-center gap-2"><Clock size={16} className="text-red-500" /> {isAdmin ? "Latest Activity" : "Recent Submissions"}</h3></div>
+          <div className="p-6 border-b border-slate-50 flex justify-between items-center"><h3 className="font-black text-slate-800 text-xs uppercase tracking-widest flex items-center gap-2"><Clock size={16} className="text-red-500" /> {filterManager === 'All' ? "Latest Activity" : `${filterManager} Recent Entries`}</h3></div>
           <table className="w-full text-left">
-            <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400"><tr className="tracking-widest"><th className="px-6 py-4">Area Manager</th><th className="px-6 py-4">Last Sales Date & Time</th></tr></thead>
+            <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400"><tr className="tracking-widest"><th className="px-6 py-4">Area Manager</th><th className="px-6 py-4">Last Activity</th></tr></thead>
             <tbody className="divide-y divide-slate-50">
               {managerSummary.length === 0 ? (
-                <tr><td colSpan="2" className="px-6 py-8 text-center text-slate-300 font-bold italic">No active data for this region.</td></tr>
+                <tr><td colSpan="2" className="px-6 py-8 text-center text-slate-300 font-bold italic">No active data for this selection.</td></tr>
               ) : managerSummary.map((m, i) => (
                 <tr key={i} className="hover:bg-slate-50 transition-colors">
                   <td className="px-6 py-4 font-black text-slate-700">{m.name}</td>
@@ -424,37 +381,20 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
       </div>
 
       <div className="bg-white rounded-[2.5rem] shadow-sm border border-slate-100 overflow-hidden">
-        <div className="p-8 border-b border-slate-50 space-y-6">
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-            <h3 className="font-black text-slate-800 text-lg tracking-tight">{isAdmin ? "Manager Performance Summary" : "Regional Performance Summary"}</h3>
+        <div className="p-8 border-b border-slate-50 flex justify-between items-center">
+            <h3 className="font-black text-slate-800 text-lg tracking-tight">{filterManager === 'All' ? "Managers Performance Summary" : `${filterManager} Performance Breakdown`}</h3>
             <div className="flex items-center gap-2 no-print">
-              <button onClick={exportSummaryExcel} className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-600 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-emerald-100 transition-all"><FileSpreadsheet size={16} /> Export Excel</button>
               <button onClick={() => window.print()} className="flex items-center gap-2 px-4 py-2 bg-slate-50 text-slate-600 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-100 transition-all"><FileText size={16} /> Save PDF</button>
             </div>
-          </div>
-          {isAdmin && (
-            <div className="flex flex-wrap gap-4 no-print border-t pt-6 border-slate-50">
-               <div className="relative flex-1 min-w-[200px]">
-                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" />
-                  <input type="text" placeholder="Search manager..." className="w-full pl-9 pr-4 py-3 bg-slate-50 border-none rounded-xl text-xs font-bold outline-none" value={tableSearch} onChange={e => setTableSearch(e.target.value)}/>
-               </div>
-               <select className="px-4 py-3 bg-slate-50 border-none rounded-xl text-[10px] font-black uppercase tracking-widest outline-none" value={performanceFilter} onChange={e => setPerformanceFilter(e.target.value)}>
-                  <option value="All">All Performance</option>
-                  <option value="Full">Achieved (100%+)</option>
-                  <option value="Good">In Progress (50-99%)</option>
-                  <option value="Under">Critical (&lt;50%)</option>
-               </select>
-            </div>
-          )}
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left">
             <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest">
-              <tr><th className="px-8 py-5">Area Manager</th><th className="px-4 py-5 text-center">GA Target</th><th className="px-4 py-5 text-center">GA Ach.</th><th className="px-4 py-5 text-center">%</th><th className="px-4 py-5 text-center">Remaining</th><th className="px-4 py-5 text-center">OC Target</th><th className="px-4 py-5 text-center">OC Ach.</th><th className="px-4 py-5 text-center">%</th><th className="px-8 py-5 text-center">AVG Hours</th></tr>
+              <tr><th className="px-8 py-5">Entity Name</th><th className="px-4 py-5 text-center">GA Target</th><th className="px-4 py-5 text-center">GA Ach.</th><th className="px-4 py-5 text-center">%</th><th className="px-4 py-5 text-center">Remaining</th><th className="px-4 py-5 text-center">OC Target</th><th className="px-4 py-5 text-center">OC Ach.</th><th className="px-4 py-5 text-center">%</th><th className="px-8 py-5 text-center">AVG Hours</th></tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
               {filteredManagerSummary.length === 0 ? (
-                <tr><td colSpan="9" className="px-8 py-10 text-center text-slate-300 italic font-bold">No performance records found.</td></tr>
+                <tr><td colSpan="9" className="px-8 py-10 text-center text-slate-300 italic font-bold">No records found.</td></tr>
               ) : filteredManagerSummary.map((m, idx) => (
                 <React.Fragment key={idx}>
                   <tr onClick={() => setSelectedManager(selectedManager === m.name ? null : m.name)} className={`cursor-pointer transition-colors ${selectedManager === m.name ? 'bg-red-50' : 'hover:bg-slate-50'}`}>
@@ -468,14 +408,31 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
                     <td className="px-4 py-5 text-center font-black text-blue-700">{m.completionOC}%</td>
                     <td className="px-8 py-5 text-center font-bold text-slate-500">{m.avgHours}h</td>
                   </tr>
-                  {selectedManager === m.name && shopDetails.map((s, si) => (
-                    <tr key={`shop-${si}`} className="bg-slate-50/50 text-[11px] font-bold"><td className="px-12 py-3 italic text-slate-500 border-l-4 border-red-500">{s.name}</td><td className="px-4 py-3 text-center">{s.targetGA}</td><td className="px-4 py-3 text-center text-red-500">{s.totalGA}</td><td className="px-4 py-3 text-center">{s.completionGA}%</td><td className="px-4 py-3 text-center text-red-900">{s.remainingGA}</td><td className="px-4 py-3 text-center">{s.targetOC}</td><td className="px-4 py-3 text-center text-blue-500">{s.totalOC}</td><td className="px-4 py-3 text-center">{s.completionOC}%</td><td className="px-8 py-3 text-center">{s.avgHours}h</td></tr>
+                  {/* Shop breakdown logic */}
+                  {((selectedManager === m.name) || (filterManager !== 'All' && m.name === filterManager)) && shopDetails.map((s, si) => (
+                    <tr key={`shop-${si}`} className="bg-slate-50/50 text-[11px] font-bold"><td className="px-12 py-3 italic text-slate-500 border-l-4 border-red-500 uppercase">{s.name}</td><td className="px-4 py-3 text-center">{s.targetGA}</td><td className="px-4 py-3 text-center text-red-500">{s.totalGA}</td><td className="px-4 py-3 text-center">{s.completionGA}%</td><td className="px-4 py-3 text-center text-red-900">{s.remainingGA}</td><td className="px-4 py-3 text-center">{s.targetOC}</td><td className="px-4 py-3 text-center text-blue-500">{s.totalOC}</td><td className="px-4 py-3 text-center">{s.completionOC}%</td><td className="px-8 py-3 text-center">{s.avgHours}h</td></tr>
                   ))}
                 </React.Fragment>
               ))}
             </tbody>
           </table>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// --- WAITING ROOM ---
+function WaitingRoom({ onLogout }) {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-[#0F172A] p-4 text-center">
+      <div className="max-w-md w-full bg-white rounded-[3rem] p-12 shadow-2xl space-y-8 animate-in fade-in zoom-in duration-500">
+        <div className="flex justify-center"><div className="p-4 bg-red-50 rounded-full"><ShieldCheck className="text-red-600" size={60} /></div></div>
+        <div className="space-y-4">
+          <h2 className="text-2xl font-black text-slate-800 italic tracking-tighter leading-tight">Welcome to the Cash Shops Sales System</h2>
+          <p className="text-slate-500 font-bold leading-relaxed">Please Contact The System Admin <br/> <span className="text-red-600 font-black text-lg">( Ahmed Sharaf )</span></p>
+        </div>
+        <button onClick={onLogout} className="w-full flex items-center justify-center gap-2 text-slate-400 hover:text-red-600 font-black text-[10px] uppercase tracking-widest transition-all pt-4"> <LogOut size={16} /> Logout </button>
       </div>
     </div>
   );
@@ -541,7 +498,6 @@ function SalesCollectionForm({ areaManagers, shops, user, db, appId, userProfile
 function SalesList({ records, targets, shops, managers, role, db, appId, userProfile }) {
   const isAdmin = userProfile?.role === 'admin';
   const assignedManager = userProfile?.assignedManager || '';
-
   const [filterManager, setFilterManager] = useState(isAdmin ? 'All' : assignedManager);
   const [filterShop, setFilterShop] = useState('All');
   const [startDate, setStartDate] = useState('');
@@ -564,14 +520,14 @@ function SalesList({ records, targets, shops, managers, role, db, appId, userPro
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <h2 className="text-3xl font-black text-slate-800 italic uppercase">Audit Trail</h2>
         <div className="flex flex-wrap gap-2 w-full md:w-auto">
-          <input type="date" className="bg-white p-3 rounded-xl text-xs font-black shadow-sm outline-none flex-1 md:flex-none" value={startDate} onChange={e => setStartDate(e.target.value)} />
+          <input type="date" className="bg-white p-3 rounded-xl text-xs font-black shadow-sm flex-1 md:flex-none" value={startDate} onChange={e => setStartDate(e.target.value)} />
           {isAdmin && (
-            <select value={filterManager} onChange={e => { setFilterManager(e.target.value); setFilterShop('All'); }} className="bg-white p-3 rounded-xl text-xs font-black uppercase tracking-widest shadow-sm outline-none flex-1 md:flex-none">
+            <select value={filterManager} onChange={e => { setFilterManager(e.target.value); setFilterShop('All'); }} className="bg-white p-3 rounded-xl text-xs font-black uppercase tracking-widest shadow-sm flex-1 md:flex-none">
               <option value="All">All Managers</option>
               {managers.map(m => <option key={m} value={m}>{m}</option>)}
             </select>
           )}
-          <select value={filterShop} onChange={e => setFilterShop(e.target.value)} className="bg-white p-3 rounded-xl text-xs font-black uppercase tracking-widest shadow-sm outline-none flex-1 md:flex-none">
+          <select value={filterShop} onChange={e => setFilterShop(e.target.value)} className="bg-white p-3 rounded-xl text-xs font-black uppercase tracking-widest shadow-sm flex-1 md:flex-none">
             <option value="All">All Shops</option>
             {availableShopsForFilter.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
           </select>
@@ -580,31 +536,17 @@ function SalesList({ records, targets, shops, managers, role, db, appId, userPro
       <div className="bg-white rounded-[2.5rem] shadow-xl overflow-hidden overflow-x-auto border border-slate-100">
         <table className="w-full text-left">
           <thead className="bg-[#0F172A] text-slate-400 text-[10px] font-black uppercase tracking-widest">
-            <tr className="tracking-widest">
-              <th className="px-8 py-6">Time Stamp</th>
-              <th className="px-8 py-6">Date</th>
-              <th className="px-8 py-6">Area Manager</th>
-              <th className="px-8 py-6">Shop Name</th>
-              <th className="px-8 py-6 text-center">GA Ach</th>
-              <th className="px-8 py-6 text-center">% Completion</th>
-              <th className="px-8 py-6 text-center">OC Ach</th>
-              <th className="px-8 py-6 text-center">Hours Worked</th>
-              {role === 'admin' && <th className="px-8 py-6 text-right">Actions</th>}
-            </tr>
+            <tr className="tracking-widest"><th className="px-8 py-6">Date</th><th className="px-8 py-6">Area Manager</th><th className="px-8 py-6">Shop Name</th><th className="px-8 py-6 text-center">GA Ach</th><th className="px-8 py-6 text-center">OC Ach</th><th className="px-8 py-6 text-center">Hours</th>{role === 'admin' && <th className="px-8 py-6 text-right">Actions</th>}</tr>
           </thead>
-          <tbody className="divide-y divide-slate-50 font-bold tabular-nums">
-            {filtered.length === 0 ? (
-              <tr><td colSpan={role === 'admin' ? 9 : 8} className="px-8 py-10 text-center text-slate-300 italic">No records found matching filters.</td></tr>
-            ) : filtered.map(r => (<tr key={r.id} className="hover:bg-slate-50 transition-colors">
-              <td className="px-8 py-5 text-slate-400 text-[10px]">{new Date(r.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
+          <tbody className="divide-y divide-slate-50 font-bold">
+            {filtered.map(r => (<tr key={r.id} className="hover:bg-slate-50 transition-colors">
               <td className="px-8 py-5 text-slate-700">{r.date}</td>
               <td className="px-8 py-5 text-slate-800 font-black">{r.areaManager}</td>
               <td className="px-8 py-5 text-slate-500 italic">{r.shopName}</td>
               <td className="px-8 py-5 text-center text-red-600">+{r.gaAch}</td>
-              <td className="px-8 py-5 text-center text-[10px] text-red-700">{(targets[r.shopName]?.ga > 0 ? (r.gaAch / targets[r.shopName].ga * 100).toFixed(1) : 0)}%</td>
               <td className="px-8 py-5 text-center text-blue-600">+{r.ocAch}</td>
               <td className="px-8 py-5 text-center text-slate-400 text-[10px]">{r.workingHours}h</td>
-              {role === 'admin' && <td className="px-8 py-5 text-right"><button onClick={async () => { if(confirm("Delete record?")) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sales', r.id)); }} className="text-slate-200 hover:text-red-500 transition-colors"><Trash2 size={16} /></button></td>}
+              {role === 'admin' && <td className="px-8 py-5 text-right"><button onClick={async () => { if(confirm("Delete?")) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sales', r.id)); }} className="text-slate-200 hover:text-red-500 transition-colors"><Trash2 size={16} /></button></td>}
             </tr>))}
           </tbody>
         </table>
@@ -617,22 +559,14 @@ function SalesList({ records, targets, shops, managers, role, db, appId, userPro
 function TargetSetting({ shops, areaManagers, targets, db, appId }) {
   const [editingShop, setEditingShop] = useState(null);
   const [editForm, setEditForm] = useState({ ga: 0, oc: 0 });
-  const handleCSVUpload = (e) => {
-    const file = e.target.files[0]; if (!file) return;
-    const reader = new FileReader(); reader.onload = async (event) => {
-      const text = event.target.result; const rows = text.split('\n').map(r => r.split(',')); const newTargets = { ...targets };
-      rows.slice(1).forEach(row => { if (row.length >= 3) { const name = row[0].trim().replace(/"/g, ''); if (shops.some(s => s.name === name)) newTargets[name] = { ga: parseFloat(row[1]) || 0, oc: parseFloat(row[2]) || 0 }; } });
-      await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config'), { targets: newTargets, areaManagers, shops }, { merge: true });
-    }; reader.readAsText(file);
-  };
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center"><h2 className="text-3xl font-black uppercase italic">Monthly Targets</h2><label className="bg-red-600 text-white px-5 py-3 rounded-2xl text-[10px] font-black cursor-pointer uppercase shadow-lg"><Upload size={14} className="inline mr-2" /> Upload CSV<input type="file" className="hidden" accept=".csv" onChange={handleCSVUpload} /></label></div>
+      <h2 className="text-3xl font-black uppercase italic">Monthly Targets</h2>
       <div className="bg-white rounded-[2.5rem] shadow-xl overflow-hidden border border-slate-100">
         <table className="w-full text-left">
           <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400"><tr><th className="px-8 py-5">Shop Name</th><th className="px-4 py-5 text-center">GA Target</th><th className="px-4 py-5 text-center">OC Target</th><th className="px-8 py-5 text-right">Actions</th></tr></thead>
           <tbody className="divide-y divide-slate-50">
-            {shops.map(shop => (<tr key={shop.name} className="hover:bg-slate-50 transition-colors"><td className="px-8 py-5 font-black text-slate-800 text-lg">{shop.name}</td>
+            {shops.map(shop => (<tr key={shop.name} className="hover:bg-slate-50"><td className="px-8 py-5 font-black text-slate-800 text-lg">{shop.name}</td>
               <td className="px-4 py-5 text-center font-black text-red-600">{editingShop === shop.name ? <input type="number" className="w-20 bg-slate-50 p-2 text-center" value={editForm.ga} onChange={e => setEditForm({...editForm, ga: e.target.value})} /> : (targets[shop.name]?.ga || 0)}</td>
               <td className="px-4 py-5 text-center font-black text-blue-600">{editingShop === shop.name ? <input type="number" className="w-20 bg-slate-50 p-2 text-center" value={editForm.oc} onChange={e => setEditForm({...editForm, oc: e.target.value})} /> : (targets[shop.name]?.oc || 0)}</td>
               <td className="px-8 py-5 text-right">{editingShop === shop.name ? <button onClick={async () => { const newTargets = { ...targets, [shop.name]: { ga: Number(editForm.ga), oc: Number(editForm.oc) } }; await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config'), { targets: newTargets, areaManagers, shops }, { merge: true }); setEditingShop(null); }} className="text-emerald-500"><Check /></button> : <button onClick={() => { setEditingShop(shop.name); setEditForm({ ga: targets[shop.name]?.ga || 0, oc: targets[shop.name]?.oc || 0 }); }} className="text-slate-300 hover:text-red-500"><Edit3 size={18} /></button>}</td>
@@ -648,42 +582,20 @@ function TargetSetting({ shops, areaManagers, targets, db, appId }) {
 function UserSearch({ users, db, appId, managers }) {
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({ username: '', role: 'user', assignedManager: '' });
-  const handleUpdate = async (uid) => { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', uid), editForm); setEditingId(null); };
-  
-  const handleDeleteUser = async (uid) => {
-    if (window.confirm("Are you sure you want to delete this user? This action cannot be undone.")) {
-      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', uid));
-    }
-  };
-
   return (
     <div className="space-y-6">
       <h2 className="text-3xl font-black uppercase italic tracking-tighter">Team Management</h2>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {users.map(u => (
-          <div key={u.uid} className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-col gap-4 group relative">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center font-black text-slate-300 uppercase">{u.username?.charAt(0)}</div>
-              <div>
-                <p className="font-black text-slate-800 text-lg">{u.username}</p>
-                <span className="text-[10px] font-black uppercase tracking-widest text-red-600">{u.assignedManager || 'No Region'}</span>
-              </div>
-            </div>
-            
-            <button onClick={() => handleDeleteUser(u.uid)} className="absolute top-6 right-6 p-2 text-slate-200 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"><Trash2 size={16} /></button>
-
+          <div key={u.uid} className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-col gap-4">
+            <div className="flex items-center gap-4"><div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center font-black text-slate-300 uppercase">{u.username?.charAt(0)}</div><div><p className="font-black text-slate-800 text-lg">{u.username}</p><span className="text-[10px] font-black uppercase tracking-widest text-red-600">{u.assignedManager || 'No Region'}</span></div></div>
             {editingId === u.uid ? (
               <div className="space-y-3">
                 <select className="w-full bg-slate-50 p-3 rounded-xl text-xs font-bold outline-none" value={editForm.role} onChange={e => setEditForm({...editForm, role: e.target.value})}><option value="user">USER</option><option value="admin">ADMIN</option></select>
                 <select className="w-full bg-slate-50 p-3 rounded-xl text-xs font-bold outline-none" value={editForm.assignedManager} onChange={e => setEditForm({...editForm, assignedManager: e.target.value})}><option value="">Assign Manager</option>{managers.map(m => <option key={m} value={m}>{m}</option>)}</select>
-                <div className="flex gap-2">
-                  <button onClick={() => handleUpdate(u.uid)} className="flex-1 bg-slate-900 text-white p-3 rounded-xl font-black">Save</button>
-                  <button onClick={() => setEditingId(null)} className="p-3 bg-slate-100 rounded-xl"><X size={18}/></button>
-                </div>
+                <button onClick={async () => { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.uid), editForm); setEditingId(null); }} className="w-full bg-slate-900 text-white p-3 rounded-xl font-black">Save</button>
               </div>
-            ) : ( 
-              <button onClick={() => { setEditingId(u.uid); setEditForm({ username: u.username, role: u.role, assignedManager: u.assignedManager || '' }); }} className="w-full bg-slate-50 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-100 transition-all">Modify Profile</button> 
-            )}
+            ) : ( <button onClick={() => { setEditingId(u.uid); setEditForm({ username: u.username, role: u.role, assignedManager: u.assignedManager || '' }); }} className="w-full bg-slate-50 py-3 rounded-2xl text-[10px] font-black uppercase">Modify Profile</button> )}
           </div>
         ))}
       </div>
@@ -697,41 +609,39 @@ function AdminDashboard({ areaManagers, shops, targets, db, appId }) {
   const update = async (m, s) => { await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config'), { areaManagers: m || areaManagers, shops: s || shops, targets }); };
   return (
     <div className="space-y-10">
-      <h2 className="text-4xl font-black italic uppercase tracking-tighter">System Configuration</h2>
+      <h2 className="text-4xl font-black italic uppercase">Configuration</h2>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
         <div className="bg-white p-10 rounded-[3rem] shadow-sm border border-slate-100 flex flex-col gap-4">
           <h3 className="font-black text-slate-800 uppercase text-[10px] tracking-widest mb-2 flex items-center gap-2 text-red-600"><UserPlus size={18} /> Add Area Manager</h3>
-          <div className="flex gap-2"><input value={newM} onChange={e => setNewM(e.target.value)} className="flex-1 bg-slate-50 p-4 rounded-xl font-bold outline-none" placeholder="Manager Name" /><button onClick={() => { update([...areaManagers, newM], null); setNewM(''); }} className="bg-red-600 text-white px-6 rounded-xl font-black shadow-lg">Add</button></div>
+          <div className="flex gap-2"><input value={newM} onChange={e => setNewM(e.target.value)} className="flex-1 bg-slate-50 p-4 rounded-xl font-bold" placeholder="Manager Name" /><button onClick={() => { if(newM) update([...areaManagers, newM], null); setNewM(''); }} className="bg-red-600 text-white px-6 rounded-xl font-black">Add</button></div>
         </div>
         <div className="bg-white p-10 rounded-[3rem] shadow-sm border border-slate-100 flex flex-col gap-4">
           <h3 className="font-black text-slate-800 uppercase text-[10px] tracking-widest mb-2 flex items-center gap-2 text-red-600"><Store size={18} /> Add Shop</h3>
-          <div className="flex flex-col gap-2"><input value={newS} onChange={e => setNewS(e.target.value)} className="bg-slate-50 p-4 rounded-xl font-bold outline-none" placeholder="Shop Name" /><select value={assignedM} onChange={e => setAssignedM(e.target.value)} className="bg-slate-50 p-4 rounded-xl font-bold outline-none"><option value="">Assign Manager</option>{areaManagers.map(m => <option key={m} value={m}>{m}</option>)}</select><button onClick={() => { if(newS && assignedM) update(null, [...shops, {name: newS, manager: assignedM}]); setNewS(''); }} className="bg-slate-900 text-white p-4 rounded-xl font-black">Link Shop</button></div>
+          <div className="flex flex-col gap-2"><input value={newS} onChange={e => setNewS(e.target.value)} className="bg-slate-50 p-4 rounded-xl font-bold" placeholder="Shop Name" /><select value={assignedM} onChange={e => setAssignedM(e.target.value)} className="bg-slate-50 p-4 rounded-xl font-bold"><option value="">Assign Manager</option>{areaManagers.map(m => <option key={m} value={m}>{m}</option>)}</select><button onClick={() => { if(newS && assignedM) update(null, [...shops, {name: newS, manager: assignedM}]); setNewS(''); }} className="bg-slate-900 text-white p-4 rounded-xl font-black">Link Shop</button></div>
         </div>
       </div>
-      <div className="bg-white rounded-[3rem] shadow-2xl overflow-hidden overflow-x-auto"><table className="w-full text-left"><thead className="bg-[#0F172A] text-slate-400 text-[10px] font-black uppercase tracking-widest"><tr><th className="px-10 py-6">Manager</th><th className="px-10 py-6">Shop</th><th className="px-10 py-6 text-right">Delete</th></tr></thead><tbody className="divide-y divide-slate-50">{shops.map((s, idx) => (<tr key={idx} className="hover:bg-slate-50"><td className="px-10 py-6 font-black text-slate-800">{s.manager}</td><td className="px-10 py-6 font-bold text-slate-400">{s.name}</td><td className="px-10 py-6 text-right"><button onClick={() => { if(confirm("Delete shop?")) update(null, shops.filter(sh => sh.name !== s.name)); }} className="p-3 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button></td></tr>))}</tbody></table></div>
     </div>
   );
 }
 
 // --- LOGIN ---
 function LoginPortal() {
-  const [authMode, setAuthMode] = useState('login'); const [email, setEmail] = useState(''); const [password, setPassword] = useState(''); const [error, setError] = useState(''); const [message, setMessage] = useState(''); const [loading, setLoading] = useState(false);
+  const [authMode, setAuthMode] = useState('login'); const [email, setEmail] = useState(''); const [password, setPassword] = useState(''); const [error, setError] = useState(''); const [loading, setLoading] = useState(false);
   const handle = async (e) => {
-    e.preventDefault(); setError(''); setMessage(''); setLoading(true);
-    try { if (authMode === 'signup') await createUserWithEmailAndPassword(auth, email, password); else if (authMode === 'login') await signInWithEmailAndPassword(auth, email, password); else { await sendPasswordResetEmail(auth, email); setMessage("Reset link sent to your email!"); } } catch (err) { setError(err.message.replace('Firebase:', '')); } setLoading(false);
+    e.preventDefault(); setError(''); setLoading(true);
+    try { if (authMode === 'signup') await createUserWithEmailAndPassword(auth, email, password); else await signInWithEmailAndPassword(auth, email, password); } catch (err) { setError("Authentication failed. Please check credentials."); } setLoading(false);
   };
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#0F172A] p-4">
-      <div className="w-full max-w-md bg-white rounded-[3rem] p-10 shadow-2xl">
-        <div className="text-center mb-10"><ShieldCheck className="text-red-600 mx-auto mb-6" size={60} /><h1 className="text-3xl font-black text-slate-800 italic tracking-tighter">Cash Shop Portal</h1><p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mt-1">{authMode === 'forgot' ? 'Recovery Mode' : 'Secured Access'}</p></div>
+      <div className="w-full max-w-md bg-white rounded-[3rem] p-10 shadow-2xl space-y-8">
+        <div className="text-center"><ShieldCheck className="text-red-600 mx-auto mb-6" size={60} /><h1 className="text-3xl font-black text-slate-800 italic uppercase">Cash Shop Portal</h1></div>
         <form onSubmit={handle} className="space-y-4">
-          <div className="space-y-1"><label className="text-[10px] font-black uppercase text-slate-400 px-1">Email</label><input required type="email" placeholder="email@company.com" className="w-full bg-slate-50 p-4 rounded-xl font-bold border-none outline-none" value={email} onChange={e => setEmail(e.target.value)} /></div>
-          {authMode !== 'forgot' && <div className="space-y-1"><label className="text-[10px] font-black uppercase text-slate-400 px-1">Password</label><input required type="password" placeholder="••••••••" className="w-full bg-slate-50 p-4 rounded-xl font-bold border-none outline-none" value={password} onChange={e => setPassword(e.target.value)} /></div>}
+          <input required type="email" placeholder="Email" className="w-full bg-slate-50 p-4 rounded-xl font-bold border-none outline-none" value={email} onChange={e => setEmail(e.target.value)} />
+          <input required type="password" placeholder="Password" className="w-full bg-slate-50 p-4 rounded-xl font-bold border-none outline-none" value={password} onChange={e => setPassword(e.target.value)} />
           {error && <div className="p-4 bg-red-50 text-red-500 rounded-xl text-[10px] font-black text-center">{error}</div>}
-          {message && <div className="p-4 bg-emerald-50 text-emerald-600 rounded-xl text-[10px] font-black text-center">{message}</div>}
-          <button disabled={loading} className="w-full bg-slate-900 text-white py-5 rounded-2xl font-black text-lg shadow-xl hover:bg-black transition-all">{loading ? <Loader2 className="animate-spin mx-auto"/> : (authMode === 'forgot' ? 'Send Link' : 'Login')}</button>
+          <button disabled={loading} className="w-full bg-slate-900 text-white py-5 rounded-2xl font-black uppercase transition-all">{loading ? <Loader2 className="animate-spin mx-auto"/> : 'Enter System'}</button>
         </form>
-        <div className="mt-8 text-center flex flex-col gap-2"><button onClick={() => setAuthMode(authMode === 'forgot' ? 'login' : 'forgot')} className="text-slate-400 font-bold text-[10px] uppercase tracking-widest hover:text-red-600">{authMode === 'forgot' ? 'Back to Login' : 'Forgot Password?'}</button><button onClick={() => setAuthMode(authMode === 'signup' ? 'login' : 'signup')} className="text-slate-400 font-bold text-[10px] uppercase tracking-widest hover:text-red-600">{authMode === 'login' ? 'Create Account' : 'Back to Login'}</button></div>
+        <button onClick={() => setAuthMode(authMode === 'signup' ? 'login' : 'signup')} className="w-full text-slate-400 font-bold text-[10px] uppercase tracking-widest hover:text-red-600">{authMode === 'login' ? 'Create Account' : 'Back to Login'}</button>
       </div>
     </div>
   );
@@ -742,28 +652,19 @@ function Navigation({ view, setView, role, onLogout }) {
   const links = [ { id: 'dashboard', label: 'Dashboard', icon: BarChart3, roles: ['admin', 'user'] }, { id: 'collection', label: 'Sales Entry', icon: PlusCircle, roles: ['admin', 'user'] }, { id: 'reports', label: 'Audit Trail', icon: ClipboardList, roles: ['admin', 'user'] }, { id: 'targets', label: 'Targets', icon: Target, roles: ['admin'] }, { id: 'userSearch', label: 'Team', icon: UsersIcon, roles: ['admin'] }, { id: 'admin', label: 'Admin', icon: Settings, roles: ['admin'] } ];
   return (
     <nav className="hidden md:flex flex-col fixed left-0 top-0 bottom-0 w-64 bg-[#0F172A] text-slate-300 p-6 z-40">
-      <div className="mb-10 px-2 flex items-center gap-3"><Store className="text-red-600" size={24} /><h1 className="text-xl font-black text-white italic tracking-tighter">Cash Shop</h1></div>
+      <div className="mb-10 flex items-center gap-3"><Store className="text-red-600" size={24} /><h1 className="text-xl font-black text-white italic">Cash Shop</h1></div>
       <div className="space-y-1 flex-1">{links.map(link => link.roles.includes(role) && (<button key={link.id} onClick={() => setView(link.id)} className={`w-full flex items-center gap-3 px-4 py-4 rounded-2xl transition-all ${view === link.id ? 'bg-red-600 text-white shadow-lg' : 'hover:bg-slate-800 text-slate-400'}`}><link.icon size={18} /> <span className="font-black text-[10px] uppercase tracking-widest">{link.label}</span></button>))}</div>
-      <button onClick={onLogout} className="mt-auto flex items-center gap-3 px-4 py-4 text-red-400 font-black text-[10px] uppercase tracking-widest transition-all"><LogOut size={18} /> Logout</button>
+      <button onClick={onLogout} className="mt-auto flex items-center gap-3 px-4 py-4 text-red-400 font-black text-[10px] uppercase tracking-widest"><LogOut size={18} /> Logout</button>
     </nav>
   );
 }
 function MobileNav({ view, setView, role }) {
-  const icons = [{id:'dashboard', icon:BarChart3, roles:['admin','user']}, {id:'collection', icon:PlusCircle, roles:['admin','user']}, {id:'reports', icon:ClipboardList, roles:['admin','user']}, {id:'targets', icon:Target, roles:['admin']}, {id:'userSearch', icon:UsersIcon, roles:['admin']}];
-  return ( <div className="fixed bottom-0 left-0 right-0 bg-white border-t flex justify-around p-3 md:hidden z-50 rounded-t-3xl shadow-2xl no-print">{icons.map(item => item.roles.includes(role) && ( <button key={item.id} onClick={() => setView(item.id)} className={`p-3 rounded-2xl ${view === item.id ? 'text-red-600 bg-red-50' : 'text-slate-400'}`}><item.icon size={22} /></button> ))}</div> );
+  const icons = [{id:'dashboard', icon:BarChart3, roles:['admin','user']}, {id:'collection', icon:PlusCircle, roles:['admin','user']}, {id:'reports', icon:ClipboardList, roles:['admin','user']}, {id:'targets', icon:Target, roles:['admin']}];
+  return ( <div className="fixed bottom-0 left-0 right-0 bg-white border-t flex justify-around p-3 md:hidden z-50 rounded-t-3xl shadow-2xl">{icons.map(item => item.roles.includes(role) && ( <button key={item.id} onClick={() => setView(item.id)} className={`p-3 rounded-2xl ${view === item.id ? 'text-red-600 bg-red-50' : 'text-slate-400'}`}><item.icon size={22} /></button> ))}</div> );
 }
-function LoadingScreen() { return ( <div className="flex h-screen items-center justify-center bg-slate-50"><div className="text-center"><Loader2 className="w-12 h-12 animate-spin text-red-600 mx-auto mb-4" /><p className="text-slate-500 font-black text-xs uppercase tracking-widest">Processing Cloud Assets...</p></div></div> ); }
+function LoadingScreen() { return ( <div className="flex h-screen items-center justify-center bg-slate-50"><div className="text-center"><Loader2 className="w-12 h-12 animate-spin text-red-600 mx-auto mb-4" /><p className="text-slate-500 font-black text-xs uppercase tracking-widest">Loading...</p></div></div> ); }
 function Onboarding({ user, setView, setUserProfile }) {
   const [name, setName] = useState(''); 
-  const handleSave = async () => { 
-    if (!name.trim()) return; 
-    const profile = { username: name, role: 'user', assignedManager: '', createdAt: Date.now() }; 
-    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid), profile); 
-    setUserProfile(profile); 
-    setView('waiting'); 
-  };
+  const handleSave = async () => { if (!name.trim()) return; const profile = { username: name, role: 'user', assignedManager: '', createdAt: Date.now() }; await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid), profile); setUserProfile(profile); setView('dashboard'); };
   return ( <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC] p-4"><div className="w-full max-md bg-white rounded-[3rem] p-10 shadow-xl text-center"><h2 className="text-2xl font-black text-slate-800 mb-8 italic">Profile Setup</h2><input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Full Name" className="w-full bg-slate-50 p-5 rounded-2xl font-bold mb-6 text-center text-xl outline-none" /><button onClick={handleSave} className="w-full bg-red-600 text-white py-5 rounded-2xl font-black text-lg">Continue</button></div></div> );
 }
-const styleTag = document.createElement('style');
-styleTag.innerHTML = `@media print { .no-print { display: none !important; } body { background: white !important; padding: 0 !important; margin: 0 !important; } main { margin: 0 !important; padding: 0 !important; width: 100% !important; max-width: 100% !important; } .md\\:pl-64 { padding-left: 0 !important; } nav { display: none !important; } .rounded-\\[2\\.5rem\\], .rounded-\\[3rem\\] { border-radius: 0 !important; border: 1px solid #eee !important; } } .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; } .custom-scrollbar::-webkit-scrollbar-thumb { background: #E2E8F0; border-radius: 10px; }`;
-document.head.appendChild(styleTag);
