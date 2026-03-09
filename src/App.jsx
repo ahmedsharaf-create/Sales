@@ -618,49 +618,49 @@ function ClosedShopsModal({ shops, onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" />
-      <div className="relative w-full max-w-md" onClick={e => e.stopPropagation()}>
+      <div className="relative w-full max-w-sm" onClick={e => e.stopPropagation()}>
 
-        {/* Exportable card — captured by html2canvas */}
-        <div ref={cardRef} style={{ borderRadius: '2rem', overflow: 'hidden', background: 'white', boxShadow: '0 25px 60px rgba(0,0,0,0.25)' }}>
+        {/* Exportable card */}
+        <div ref={cardRef} style={{ borderRadius: '1.5rem', overflow: 'hidden', background: 'white', boxShadow: '0 20px 50px rgba(0,0,0,0.3)' }}>
 
           {/* Header */}
-          <div style={{ background: '#0F172A', padding: '28px 32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ background: '#0F172A', padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
-                <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#EF4444' }} />
-                <span style={{ color: 'white', fontWeight: 900, fontSize: 18, fontStyle: 'italic', letterSpacing: '-0.5px' }}>Closed Shops Today</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
+                <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#EF4444' }} />
+                <span style={{ color: 'white', fontWeight: 900, fontSize: 14, fontStyle: 'italic', letterSpacing: '-0.3px' }}>Closed Shops Today</span>
               </div>
-              <span style={{ color: '#64748B', fontWeight: 800, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.15em' }}>{dateStr}</span>
+              <span style={{ color: '#475569', fontWeight: 800, fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.12em' }}>{dateStr}</span>
             </div>
-            <div style={{ background: '#EF4444', color: 'white', borderRadius: 12, padding: '6px 14px', fontWeight: 900, fontSize: 22 }}>
+            <div style={{ background: '#EF4444', color: 'white', borderRadius: 8, padding: '3px 10px', fontWeight: 900, fontSize: 16 }}>
               {shops.length}
             </div>
           </div>
 
           {/* Body */}
-          <div style={{ padding: '20px 24px', background: 'white' }}>
+          <div style={{ padding: '12px 16px', background: 'white', maxHeight: '55vh', overflowY: 'auto' }}>
             {shops.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '40px 0' }}>
-                <div style={{ width: 56, height: 56, background: '#ECFDF5', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
-                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+              <div style={{ textAlign: 'center', padding: '24px 0' }}>
+                <div style={{ width: 40, height: 40, background: '#ECFDF5', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 10px' }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                 </div>
-                <p style={{ fontWeight: 900, color: '#1E293B', fontSize: 16, margin: 0 }}>All Shops Active!</p>
-                <p style={{ fontWeight: 600, color: '#94A3B8', fontSize: 13, marginTop: 6 }}>Every shop has submitted data today.</p>
+                <p style={{ fontWeight: 900, color: '#1E293B', fontSize: 13, margin: 0 }}>All Shops Active!</p>
+                <p style={{ fontWeight: 600, color: '#94A3B8', fontSize: 11, marginTop: 4 }}>Every shop submitted data today.</p>
               </div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {shops.map((shop, i) => (
-                  <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: '#F8FAFC', borderRadius: 16, borderLeft: '3px solid #EF4444' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                      <div style={{ width: 32, height: 32, background: '#FEE2E2', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#EF4444" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: '#F8FAFC', borderRadius: 10, borderLeft: '3px solid #EF4444' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ width: 26, height: 26, background: '#FEE2E2', borderRadius: 7, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#EF4444" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
                       </div>
                       <div>
-                        <p style={{ fontWeight: 900, color: '#1E293B', fontSize: 13, margin: 0 }}>{shop.name}</p>
-                        <p style={{ fontWeight: 700, color: '#94A3B8', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', margin: 0 }}>{shop.manager}</p>
+                        <p style={{ fontWeight: 900, color: '#1E293B', fontSize: 12, margin: 0 }}>{shop.name}</p>
+                        <p style={{ fontWeight: 700, color: '#94A3B8', fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.08em', margin: 0 }}>{shop.manager}</p>
                       </div>
                     </div>
-                    <span style={{ fontSize: 10, fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#EF4444', background: '#FEE2E2', padding: '4px 10px', borderRadius: 8 }}>No Data</span>
+                    <span style={{ fontSize: 9, fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#EF4444', background: '#FEE2E2', padding: '3px 8px', borderRadius: 6 }}>No Data</span>
                   </div>
                 ))}
               </div>
@@ -668,28 +668,28 @@ function ClosedShopsModal({ shops, onClose }) {
           </div>
 
           {/* Footer */}
-          <div style={{ padding: '14px 24px 20px', borderTop: '1px solid #F1F5F9', textAlign: 'center' }}>
-            <span style={{ fontSize: 10, fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.2em', color: '#CBD5E1' }}>
+          <div style={{ padding: '8px 16px 12px', borderTop: '1px solid #F1F5F9', textAlign: 'center' }}>
+            <span style={{ fontSize: 8, fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.18em', color: '#CBD5E1' }}>
               Cash Shop Sales System — ONE Team One Goal
             </span>
           </div>
         </div>
 
-        {/* Action buttons — outside the exportable card */}
-        <div className="flex gap-3 mt-4">
+        {/* Action buttons */}
+        <div className="flex gap-2 mt-3">
           <button
             onClick={exportAsPng}
             disabled={exporting}
-            className="flex-1 flex items-center justify-center gap-2 bg-white text-slate-800 py-4 rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg hover:bg-slate-50 transition-all"
+            className="flex-1 flex items-center justify-center gap-2 bg-white text-slate-800 py-3 rounded-xl font-black text-xs uppercase tracking-widest shadow-lg hover:bg-slate-50 transition-all"
           >
-            {exporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
-            {exporting ? 'Exporting...' : 'Export as PNG'}
+            {exporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+            {exporting ? 'Exporting...' : 'Export PNG'}
           </button>
           <button
             onClick={onClose}
-            className="px-6 py-4 bg-slate-800/80 text-slate-300 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-700 transition-all"
+            className="px-5 py-3 bg-slate-800/80 text-slate-300 rounded-xl font-black text-xs hover:bg-slate-700 transition-all"
           >
-            <X size={16} />
+            <X size={14} />
           </button>
         </div>
 
