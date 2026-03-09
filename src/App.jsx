@@ -69,7 +69,7 @@ import {
 const firebaseConfig = typeof __firebase_config !== 'undefined' 
   ? JSON.parse(__firebase_config) 
   : {
-      apiKey: "",
+      apiKey: "AIzaSyAYb6zn5YulU9Ght-3T2vHFzdbOL94GYqs",
       authDomain: "pyramids-sales.firebaseapp.com",
       projectId: "pyramids-sales",
       storageBucket: "pyramids-sales.firebasestorage.app",
@@ -84,20 +84,6 @@ const appId = typeof __app_id !== 'undefined' ? __app_id : 'pyramids-sales-v1';
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-
-// CSS for Print support and custom scrollbars
-const styles = `
-  @media print { 
-    .no-print { display: none !important; } 
-    body { background: white !important; padding: 0 !important; margin: 0 !important; } 
-    main { margin: 0 !important; padding: 0 !important; width: 100% !important; max-width: 100% !important; } 
-    .md\\:pl-64 { padding-left: 0 !important; } 
-    nav { display: none !important; } 
-    .rounded-\\[2\\.5rem\\], .rounded-\\[3rem\\] { border-radius: 0 !important; border: 1px solid #eee !important; } 
-  } 
-  .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; } 
-  .custom-scrollbar::-webkit-scrollbar-thumb { background: #E2E8F0; border-radius: 10px; }
-`;
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -118,6 +104,9 @@ export default function App() {
       try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
           await signInWithCustomToken(auth, __initial_auth_token);
+        } else if (!auth.currentUser) {
+          // For this specific app, we primarily use Email/Password, 
+          // but we follow the await protocol.
         }
       } catch (err) {
         console.error("Authentication failed:", err);
@@ -165,7 +154,7 @@ export default function App() {
     fetchProfile();
   }, [user]);
 
-  // (3) Set up Firestore Listeners
+  // (3) Set up Firestore Listeners (Guarded by User & Auth)
   useEffect(() => {
     if (!user || !userProfile) return;
 
@@ -186,7 +175,7 @@ export default function App() {
       const records = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
       const sorted = records.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
       if (userProfile.role === 'admin') setSalesRecords(sorted);
-      else setSalesRecords(sorted.filter(r => r.areaManager === userProfile.assignedManager));
+      else setSalesRecords(sorted.filter(r => r.submittedBy === user.uid));
     }, (err) => console.error("Sales listener error:", err));
 
     // Users Listener (Admin Only)
@@ -218,7 +207,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-slate-900 font-sans pb-20 md:pb-0 md:pl-64">
-      <style>{styles}</style>
       <Navigation view={view} setView={setView} role={userProfile?.role} onLogout={handleLogout} />
       <main className="p-4 md:p-8 max-w-[1600px] mx-auto">
         {view === 'dashboard' && <Dashboard records={salesRecords} targets={targets} shops={shops} managers={areaManagers} userProfile={userProfile} />}
@@ -233,8 +221,7 @@ export default function App() {
   );
 }
 
-// --- SUB-COMPONENTS ---
-
+// --- WAITING ROOM ---
 function WaitingRoom({ onLogout }) {
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#0F172A] p-4 text-center">
@@ -269,6 +256,7 @@ function WaitingRoom({ onLogout }) {
   );
 }
 
+// --- DASHBOARD ---
 function Dashboard({ records, targets, shops, managers, userProfile }) {
   const isAdmin = userProfile?.role === 'admin';
   const assignedManager = userProfile?.assignedManager || '';
@@ -277,15 +265,6 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
   
   const [tableSearch, setTableSearch] = useState('');
   const [performanceFilter, setPerformanceFilter] = useState('All');
-
-  // Auto-expand and focus logic for Admin region selection
-  useEffect(() => {
-    if (filterManager !== 'All') {
-      setSelectedManager(filterManager);
-    } else {
-      setSelectedManager(null);
-    }
-  }, [filterManager]);
 
   const filteredRecords = useMemo(() => {
     let data = [...records];
@@ -298,7 +277,7 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
 
   const managerSummary = useMemo(() => {
     const summary = {};
-    const activeManagers = isAdmin ? (filterManager === 'All' ? managers : [filterManager]) : [assignedManager];
+    const activeManagers = isAdmin ? managers : managers.filter(m => m === assignedManager);
 
     activeManagers.forEach(m => {
       summary[m] = { 
@@ -333,7 +312,7 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
       remainingGA: Math.max(0, m.targetGA - m.totalGA),
       completionOC: m.targetOC > 0 ? ((m.totalOC / m.targetOC) * 100).toFixed(1) : 0
     }));
-  }, [filteredRecords, managers, shops, targets, isAdmin, assignedManager, filterManager]);
+  }, [filteredRecords, managers, shops, targets, isAdmin, assignedManager]);
 
   const filteredManagerSummary = useMemo(() => {
     return managerSummary.filter(m => {
@@ -365,7 +344,7 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
 
   const operationalStats = useMemo(() => {
     const today = new Date().toISOString().split('T')[0];
-    const relevantShops = isAdmin && filterManager === 'All' ? shops : shops.filter(s => s.manager === (isAdmin ? filterManager : assignedManager));
+    const relevantShops = isAdmin ? shops : shops.filter(s => s.manager === assignedManager);
     const activeShopNamesToday = [...new Set(records.filter(r => r.date === today).map(r => r.shopName))];
     
     const totalGA = filteredRecords.reduce((acc, r) => acc + (r.gaAch || 0), 0);
@@ -376,7 +355,7 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
       totalOC, 
       closedShopsToday: Math.max(0, relevantShops.length - activeShopNamesToday.filter(name => relevantShops.some(s => s.name === name)).length) 
     };
-  }, [records, shops, filteredRecords, isAdmin, assignedManager, filterManager]);
+  }, [records, shops, filteredRecords, isAdmin, assignedManager]);
 
   const exportSummaryExcel = () => {
     const headers = ['Manager', 'GA Target', 'GA Ach.', 'GA %', 'GA Remaining', 'OC Target', 'OC Ach.', 'OC %', 'Avg Hours'];
@@ -502,6 +481,7 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
   );
 }
 
+// --- SALES COLLECTION FORM ---
 function SalesCollectionForm({ areaManagers, shops, user, db, appId, userProfile }) {
   const isAdmin = userProfile?.role === 'admin';
   const assigned = userProfile?.assignedManager || '';
@@ -557,6 +537,7 @@ function SalesCollectionForm({ areaManagers, shops, user, db, appId, userProfile
   );
 }
 
+// --- AUDIT TRAIL ---
 function SalesList({ records, targets, shops, managers, role, db, appId, userProfile }) {
   const isAdmin = userProfile?.role === 'admin';
   const assignedManager = userProfile?.assignedManager || '';
@@ -623,7 +604,7 @@ function SalesList({ records, targets, shops, managers, role, db, appId, userPro
               <td className="px-8 py-5 text-center text-[10px] text-red-700">{(targets[r.shopName]?.ga > 0 ? (r.gaAch / targets[r.shopName].ga * 100).toFixed(1) : 0)}%</td>
               <td className="px-8 py-5 text-center text-blue-600">+{r.ocAch}</td>
               <td className="px-8 py-5 text-center text-slate-400 text-[10px]">{r.workingHours}h</td>
-              {role === 'admin' && <td className="px-8 py-5 text-right"><button onClick={async () => { await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sales', r.id)); }} className="text-slate-200 hover:text-red-500 transition-colors"><Trash2 size={16} /></button></td>}
+              {role === 'admin' && <td className="px-8 py-5 text-right"><button onClick={async () => { if(confirm("Delete record?")) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sales', r.id)); }} className="text-slate-200 hover:text-red-500 transition-colors"><Trash2 size={16} /></button></td>}
             </tr>))}
           </tbody>
         </table>
@@ -632,6 +613,7 @@ function SalesList({ records, targets, shops, managers, role, db, appId, userPro
   );
 }
 
+// --- TARGETS ---
 function TargetSetting({ shops, areaManagers, targets, db, appId }) {
   const [editingShop, setEditingShop] = useState(null);
   const [editForm, setEditForm] = useState({ ga: 0, oc: 0 });
@@ -662,13 +644,16 @@ function TargetSetting({ shops, areaManagers, targets, db, appId }) {
   );
 }
 
+// --- TEAM ---
 function UserSearch({ users, db, appId, managers }) {
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({ username: '', role: 'user', assignedManager: '' });
   const handleUpdate = async (uid) => { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', uid), editForm); setEditingId(null); };
   
   const handleDeleteUser = async (uid) => {
-    await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', uid));
+    if (window.confirm("Are you sure you want to delete this user? This action cannot be undone.")) {
+      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', uid));
+    }
   };
 
   return (
@@ -706,6 +691,7 @@ function UserSearch({ users, db, appId, managers }) {
   );
 }
 
+// --- ADMIN ---
 function AdminDashboard({ areaManagers, shops, targets, db, appId }) {
   const [newM, setNewM] = useState(''); const [newS, setNewS] = useState(''); const [assignedM, setAssignedM] = useState('');
   const update = async (m, s) => { await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config'), { areaManagers: m || areaManagers, shops: s || shops, targets }); };
@@ -722,11 +708,12 @@ function AdminDashboard({ areaManagers, shops, targets, db, appId }) {
           <div className="flex flex-col gap-2"><input value={newS} onChange={e => setNewS(e.target.value)} className="bg-slate-50 p-4 rounded-xl font-bold outline-none" placeholder="Shop Name" /><select value={assignedM} onChange={e => setAssignedM(e.target.value)} className="bg-slate-50 p-4 rounded-xl font-bold outline-none"><option value="">Assign Manager</option>{areaManagers.map(m => <option key={m} value={m}>{m}</option>)}</select><button onClick={() => { if(newS && assignedM) update(null, [...shops, {name: newS, manager: assignedM}]); setNewS(''); }} className="bg-slate-900 text-white p-4 rounded-xl font-black">Link Shop</button></div>
         </div>
       </div>
-      <div className="bg-white rounded-[3rem] shadow-2xl overflow-hidden overflow-x-auto"><table className="w-full text-left"><thead className="bg-[#0F172A] text-slate-400 text-[10px] font-black uppercase tracking-widest"><tr><th className="px-10 py-6">Manager</th><th className="px-10 py-6">Shop</th><th className="px-10 py-6 text-right">Delete</th></tr></thead><tbody className="divide-y divide-slate-50">{shops.map((s, idx) => (<tr key={idx} className="hover:bg-slate-50"><td className="px-10 py-6 font-black text-slate-800">{s.manager}</td><td className="px-10 py-6 font-bold text-slate-400">{s.name}</td><td className="px-10 py-6 text-right"><button onClick={() => { update(null, shops.filter(sh => sh.name !== s.name)); }} className="p-3 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button></td></tr>))}</tbody></table></div>
+      <div className="bg-white rounded-[3rem] shadow-2xl overflow-hidden overflow-x-auto"><table className="w-full text-left"><thead className="bg-[#0F172A] text-slate-400 text-[10px] font-black uppercase tracking-widest"><tr><th className="px-10 py-6">Manager</th><th className="px-10 py-6">Shop</th><th className="px-10 py-6 text-right">Delete</th></tr></thead><tbody className="divide-y divide-slate-50">{shops.map((s, idx) => (<tr key={idx} className="hover:bg-slate-50"><td className="px-10 py-6 font-black text-slate-800">{s.manager}</td><td className="px-10 py-6 font-bold text-slate-400">{s.name}</td><td className="px-10 py-6 text-right"><button onClick={() => { if(confirm("Delete shop?")) update(null, shops.filter(sh => sh.name !== s.name)); }} className="p-3 bg-red-50 text-red-500 rounded-xl hover:bg-red-500 hover:text-white transition-all"><Trash2 size={16}/></button></td></tr>))}</tbody></table></div>
     </div>
   );
 }
 
+// --- LOGIN ---
 function LoginPortal() {
   const [authMode, setAuthMode] = useState('login'); const [email, setEmail] = useState(''); const [password, setPassword] = useState(''); const [error, setError] = useState(''); const [message, setMessage] = useState(''); const [loading, setLoading] = useState(false);
   const handle = async (e) => {
@@ -750,6 +737,7 @@ function LoginPortal() {
   );
 }
 
+// --- UTILS ---
 function Navigation({ view, setView, role, onLogout }) {
   const links = [ { id: 'dashboard', label: 'Dashboard', icon: BarChart3, roles: ['admin', 'user'] }, { id: 'collection', label: 'Sales Entry', icon: PlusCircle, roles: ['admin', 'user'] }, { id: 'reports', label: 'Audit Trail', icon: ClipboardList, roles: ['admin', 'user'] }, { id: 'targets', label: 'Targets', icon: Target, roles: ['admin'] }, { id: 'userSearch', label: 'Team', icon: UsersIcon, roles: ['admin'] }, { id: 'admin', label: 'Admin', icon: Settings, roles: ['admin'] } ];
   return (
@@ -760,14 +748,11 @@ function Navigation({ view, setView, role, onLogout }) {
     </nav>
   );
 }
-
 function MobileNav({ view, setView, role }) {
   const icons = [{id:'dashboard', icon:BarChart3, roles:['admin','user']}, {id:'collection', icon:PlusCircle, roles:['admin','user']}, {id:'reports', icon:ClipboardList, roles:['admin','user']}, {id:'targets', icon:Target, roles:['admin']}, {id:'userSearch', icon:UsersIcon, roles:['admin']}];
   return ( <div className="fixed bottom-0 left-0 right-0 bg-white border-t flex justify-around p-3 md:hidden z-50 rounded-t-3xl shadow-2xl no-print">{icons.map(item => item.roles.includes(role) && ( <button key={item.id} onClick={() => setView(item.id)} className={`p-3 rounded-2xl ${view === item.id ? 'text-red-600 bg-red-50' : 'text-slate-400'}`}><item.icon size={22} /></button> ))}</div> );
 }
-
 function LoadingScreen() { return ( <div className="flex h-screen items-center justify-center bg-slate-50"><div className="text-center"><Loader2 className="w-12 h-12 animate-spin text-red-600 mx-auto mb-4" /><p className="text-slate-500 font-black text-xs uppercase tracking-widest">Processing Cloud Assets...</p></div></div> ); }
-
 function Onboarding({ user, setView, setUserProfile }) {
   const [name, setName] = useState(''); 
   const handleSave = async () => { 
@@ -779,3 +764,6 @@ function Onboarding({ user, setView, setUserProfile }) {
   };
   return ( <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC] p-4"><div className="w-full max-md bg-white rounded-[3rem] p-10 shadow-xl text-center"><h2 className="text-2xl font-black text-slate-800 mb-8 italic">Profile Setup</h2><input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Full Name" className="w-full bg-slate-50 p-5 rounded-2xl font-bold mb-6 text-center text-xl outline-none" /><button onClick={handleSave} className="w-full bg-red-600 text-white py-5 rounded-2xl font-black text-lg">Continue</button></div></div> );
 }
+const styleTag = document.createElement('style');
+styleTag.innerHTML = `@media print { .no-print { display: none !important; } body { background: white !important; padding: 0 !important; margin: 0 !important; } main { margin: 0 !important; padding: 0 !important; width: 100% !important; max-width: 100% !important; } .md\\:pl-64 { padding-left: 0 !important; } nav { display: none !important; } .rounded-\\[2\\.5rem\\], .rounded-\\[3rem\\] { border-radius: 0 !important; border: 1px solid #eee !important; } } .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; } .custom-scrollbar::-webkit-scrollbar-thumb { background: #E2E8F0; border-radius: 10px; }`;
+document.head.appendChild(styleTag);
