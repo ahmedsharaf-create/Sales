@@ -258,6 +258,9 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
   const [tableSearch, setTableSearch] = useState('');
   const [performanceFilter, setPerformanceFilter] = useState('All');
 
+  // When admin picks a specific manager, auto-expand that manager's shops
+  const isSingleManagerView = isAdmin && filterManager !== 'All';
+
   const filteredRecords = useMemo(() => {
     let data = [...records];
     const managerToFilter = isAdmin ? filterManager : assignedManager;
@@ -267,9 +270,14 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
     return data;
   }, [records, filterManager, isAdmin, assignedManager]);
 
+  // Build summary only for the relevant managers
   const managerSummary = useMemo(() => {
     const summary = {};
-    const activeManagers = isAdmin ? managers : managers.filter(m => m === assignedManager);
+    // If admin filtered to one manager, only show that one; otherwise show all
+    const activeManagers = isAdmin
+      ? (filterManager === 'All' ? managers : [filterManager])
+      : managers.filter(m => m === assignedManager);
+
     activeManagers.forEach(m => {
       summary[m] = { name: m, totalGA: 0, totalOC: 0, entryCount: 0, totalHours: 0, targetGA: 0, targetOC: 0, lastActivity: null };
     });
@@ -297,9 +305,11 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
       remainingGA: Math.max(0, m.targetGA - m.totalGA),
       completionOC: m.targetOC > 0 ? ((m.totalOC / m.targetOC) * 100).toFixed(1) : 0
     }));
-  }, [filteredRecords, managers, shops, targets, isAdmin, assignedManager]);
+  }, [filteredRecords, managers, shops, targets, isAdmin, assignedManager, filterManager]);
 
   const filteredManagerSummary = useMemo(() => {
+    // In single-manager view, skip extra search/performance filters (they're hidden anyway)
+    if (isSingleManagerView) return managerSummary;
     return managerSummary.filter(m => {
       const matchesSearch = m.name.toLowerCase().includes(tableSearch.toLowerCase());
       const numCompletion = parseFloat(m.completionGA);
@@ -308,11 +318,11 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
       if (performanceFilter === 'Full') return matchesSearch && numCompletion >= 100;
       return matchesSearch;
     });
-  }, [managerSummary, tableSearch, performanceFilter]);
+  }, [managerSummary, tableSearch, performanceFilter, isSingleManagerView]);
 
-  const shopDetails = useMemo(() => {
-    if (!selectedManager) return [];
-    return shops.filter(s => s.manager === selectedManager).map(s => {
+  // Compute shop breakdown for a given manager name
+  const getShopDetails = (managerName) => {
+    return shops.filter(s => s.manager === managerName).map(s => {
       const shopRecords = filteredRecords.filter(r => r.shopName === s.name);
       const totalGA = shopRecords.reduce((acc, r) => acc + (r.gaAch || 0), 0);
       const totalOC = shopRecords.reduce((acc, r) => acc + (r.ocAch || 0), 0);
@@ -326,11 +336,13 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
         avgHours: shopRecords.length > 0 ? (totalHours / shopRecords.length).toFixed(1) : 0
       };
     });
-  }, [selectedManager, shops, filteredRecords, targets]);
+  };
 
   const operationalStats = useMemo(() => {
     const today = new Date().toISOString().split('T')[0];
-    const relevantShops = isAdmin ? shops : shops.filter(s => s.manager === assignedManager);
+    const relevantShops = isSingleManagerView
+      ? shops.filter(s => s.manager === filterManager)
+      : (isAdmin ? shops : shops.filter(s => s.manager === assignedManager));
     const activeShopNamesToday = [...new Set(records.filter(r => r.date === today).map(r => r.shopName))];
     const totalGA = filteredRecords.reduce((acc, r) => acc + (r.gaAch || 0), 0);
     const totalOC = filteredRecords.reduce((acc, r) => acc + (r.ocAch || 0), 0);
@@ -338,7 +350,7 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
       totalGA, totalOC, 
       closedShopsToday: Math.max(0, relevantShops.length - activeShopNamesToday.filter(name => relevantShops.some(s => s.name === name)).length) 
     };
-  }, [records, shops, filteredRecords, isAdmin, assignedManager]);
+  }, [records, shops, filteredRecords, isAdmin, assignedManager, filterManager, isSingleManagerView]);
 
   const exportSummaryExcel = () => {
     const headers = ['Manager', 'GA Target', 'GA Ach.', 'GA %', 'GA Remaining', 'OC Target', 'OC Ach.', 'OC %', 'Avg Hours'];
@@ -355,12 +367,15 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div className="flex items-center gap-3">
           <div className="p-3 bg-red-600 rounded-2xl shadow-lg shadow-red-200"><LayoutDashboard className="text-white" size={24} /></div>
-          <div><h2 className="text-2xl font-black text-slate-800 tracking-tight italic">{isAdmin ? "Performance Hub" : "Your Performance"}</h2></div>
+          <div>
+            <h2 className="text-2xl font-black text-slate-800 tracking-tight italic">{isAdmin ? "Performance Hub" : "Your Performance"}</h2>
+            {isSingleManagerView && <p className="text-xs font-black uppercase text-red-500 tracking-widest mt-0.5">{filterManager}</p>}
+          </div>
         </div>
         {isAdmin && (
           <div className="flex items-center gap-2">
             <span className="text-xs font-black uppercase text-slate-400">View Region:</span>
-            <select value={filterManager} onChange={e => setFilterManager(e.target.value)} className="text-xs font-black uppercase tracking-widest p-3 bg-white border border-slate-100 rounded-xl shadow-sm outline-none cursor-pointer">
+            <select value={filterManager} onChange={e => { setFilterManager(e.target.value); setSelectedManager(null); }} className="text-xs font-black uppercase tracking-widest p-3 bg-white border border-slate-100 rounded-xl shadow-sm outline-none cursor-pointer">
               <option value="All">All Regions</option>
               {managers.map(m => <option key={m} value={m}>{m}</option>)}
             </select>
@@ -391,11 +406,11 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
         </div>
         <div className="space-y-4">
           <div className="bg-red-600 p-6 rounded-3xl text-white shadow-xl shadow-red-100">
-            <p className="text-xs font-black uppercase text-red-100 mb-1">Total GA Achieved</p>
+            <p className="text-xs font-black uppercase text-red-100 mb-1">{isSingleManagerView ? filterManager + ' — ' : ''}Total GA Achieved</p>
             <h4 className="text-3xl font-black italic">{operationalStats.totalGA.toLocaleString()}</h4>
           </div>
           <div className="bg-blue-600 p-6 rounded-3xl text-white shadow-xl shadow-blue-100">
-            <p className="text-xs font-black uppercase text-blue-100 mb-1">Total OC Achieved</p>
+            <p className="text-xs font-black uppercase text-blue-100 mb-1">{isSingleManagerView ? filterManager + ' — ' : ''}Total OC Achieved</p>
             <h4 className="text-3xl font-black italic">{operationalStats.totalOC.toLocaleString()}</h4>
           </div>
           <div className="bg-slate-900 p-6 rounded-3xl text-white shadow-xl shadow-slate-200">
@@ -408,13 +423,16 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
       <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
         <div className="p-8 border-b border-slate-50 space-y-6">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-            <h3 className="font-black text-slate-800 text-lg tracking-tight">Manager Performance Summary</h3>
+            <h3 className="font-black text-slate-800 text-lg tracking-tight">
+              {isSingleManagerView ? `${filterManager} — Shop Breakdown` : 'Manager Performance Summary'}
+            </h3>
             <div className="flex items-center gap-2">
               <button onClick={exportSummaryExcel} className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-600 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-emerald-100 transition-all"><FileSpreadsheet size={16} /> Export</button>
               <button onClick={() => window.print()} className="flex items-center gap-2 px-4 py-2 bg-slate-50 text-slate-600 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-slate-100 transition-all"><FileText size={16} /> PDF</button>
             </div>
           </div>
-          {isAdmin && (
+          {/* Only show search/performance filters when viewing ALL managers */}
+          {isAdmin && !isSingleManagerView && (
             <div className="flex flex-wrap gap-4 border-t pt-6 border-slate-50">
               <div className="relative flex-1 min-w-[200px]">
                 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-300" />
@@ -430,56 +448,120 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
           )}
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <thead className="bg-slate-50 text-xs font-black uppercase text-slate-400 tracking-widest">
-              <tr>
-                <th className="px-8 py-5">Area Manager</th>
-                <th className="px-4 py-5 text-center">GA Target</th>
-                <th className="px-4 py-5 text-center">GA Ach.</th>
-                <th className="px-4 py-5 text-center">%</th>
-                <th className="px-4 py-5 text-center">Remaining</th>
-                <th className="px-4 py-5 text-center">OC Target</th>
-                <th className="px-4 py-5 text-center">OC Ach.</th>
-                <th className="px-4 py-5 text-center">%</th>
-                <th className="px-8 py-5 text-center">AVG Hours</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50">
-              {filteredManagerSummary.length === 0 ? (
-                <tr><td colSpan="9" className="px-8 py-10 text-center text-slate-300 italic font-bold">No performance records found.</td></tr>
-              ) : filteredManagerSummary.map((m, idx) => (
-                <React.Fragment key={idx}>
-                  <tr onClick={() => setSelectedManager(selectedManager === m.name ? null : m.name)} className={`cursor-pointer transition-colors ${selectedManager === m.name ? 'bg-red-50' : 'hover:bg-slate-50'}`}>
-                    <td className="px-8 py-5 font-black text-slate-700 flex items-center gap-2">
-                      {selectedManager === m.name ? <ChevronDown size={14} className="text-red-500" /> : <ChevronRight size={14} className="text-slate-300" />}
-                      {m.name}
-                    </td>
-                    <td className="px-4 py-5 text-center font-bold text-slate-400">{m.targetGA.toLocaleString()}</td>
-                    <td className="px-4 py-5 text-center font-black text-red-600">{m.totalGA.toLocaleString()}</td>
-                    <td className="px-4 py-5 text-center font-black text-red-700">{m.completionGA}%</td>
-                    <td className="px-4 py-5 text-center font-bold text-red-900">{m.remainingGA.toLocaleString()}</td>
-                    <td className="px-4 py-5 text-center font-bold text-slate-400">{m.targetOC.toLocaleString()}</td>
-                    <td className="px-4 py-5 text-center font-black text-blue-600">{m.totalOC.toLocaleString()}</td>
-                    <td className="px-4 py-5 text-center font-black text-blue-700">{m.completionOC}%</td>
-                    <td className="px-8 py-5 text-center font-bold text-slate-500">{m.avgHours}h</td>
-                  </tr>
-                  {selectedManager === m.name && shopDetails.map((s, si) => (
-                    <tr key={`shop-${si}`} className="bg-slate-50/50 text-xs font-bold">
-                      <td className="px-12 py-3 italic text-slate-500 border-l-4 border-red-500">{s.name}</td>
-                      <td className="px-4 py-3 text-center">{s.targetGA}</td>
-                      <td className="px-4 py-3 text-center text-red-500">{s.totalGA}</td>
-                      <td className="px-4 py-3 text-center">{s.completionGA}%</td>
-                      <td className="px-4 py-3 text-center text-red-900">{s.remainingGA}</td>
-                      <td className="px-4 py-3 text-center">{s.targetOC}</td>
-                      <td className="px-4 py-3 text-center text-blue-500">{s.totalOC}</td>
-                      <td className="px-4 py-3 text-center">{s.completionOC}%</td>
-                      <td className="px-8 py-3 text-center">{s.avgHours}h</td>
-                    </tr>
-                  ))}
-                </React.Fragment>
-              ))}
-            </tbody>
-          </table>
+          {isSingleManagerView ? (
+            // --- SINGLE MANAGER VIEW: show manager totals row + all shops expanded ---
+            <table className="w-full text-left">
+              <thead className="bg-slate-50 text-xs font-black uppercase text-slate-400 tracking-widest">
+                <tr>
+                  <th className="px-8 py-5">Shop / Manager</th>
+                  <th className="px-4 py-5 text-center">GA Target</th>
+                  <th className="px-4 py-5 text-center">GA Ach.</th>
+                  <th className="px-4 py-5 text-center">%</th>
+                  <th className="px-4 py-5 text-center">Remaining</th>
+                  <th className="px-4 py-5 text-center">OC Target</th>
+                  <th className="px-4 py-5 text-center">OC Ach.</th>
+                  <th className="px-4 py-5 text-center">%</th>
+                  <th className="px-8 py-5 text-center">AVG Hours</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {filteredManagerSummary.map((m, idx) => {
+                  const shops = getShopDetails(m.name);
+                  return (
+                    <React.Fragment key={idx}>
+                      {/* Manager totals row */}
+                      <tr className="bg-red-50 border-l-4 border-red-500">
+                        <td className="px-8 py-5 font-black text-slate-800 flex items-center gap-2"><Store size={14} className="text-red-500" />{m.name} <span className="text-xs font-bold text-slate-400 ml-1">— Totals</span></td>
+                        <td className="px-4 py-5 text-center font-bold text-slate-400">{m.targetGA.toLocaleString()}</td>
+                        <td className="px-4 py-5 text-center font-black text-red-600">{m.totalGA.toLocaleString()}</td>
+                        <td className="px-4 py-5 text-center font-black text-red-700">{m.completionGA}%</td>
+                        <td className="px-4 py-5 text-center font-bold text-red-900">{m.remainingGA.toLocaleString()}</td>
+                        <td className="px-4 py-5 text-center font-bold text-slate-400">{m.targetOC.toLocaleString()}</td>
+                        <td className="px-4 py-5 text-center font-black text-blue-600">{m.totalOC.toLocaleString()}</td>
+                        <td className="px-4 py-5 text-center font-black text-blue-700">{m.completionOC}%</td>
+                        <td className="px-8 py-5 text-center font-bold text-slate-500">{m.avgHours}h</td>
+                      </tr>
+                      {/* All shops for this manager */}
+                      {shops.map((s, si) => (
+                        <tr key={`shop-${si}`} className="bg-white hover:bg-slate-50 text-xs font-bold transition-colors">
+                          <td className="px-12 py-4 italic text-slate-600 border-l-4 border-slate-200">{s.name}</td>
+                          <td className="px-4 py-4 text-center text-slate-400">{s.targetGA.toLocaleString()}</td>
+                          <td className="px-4 py-4 text-center text-red-500">{s.totalGA.toLocaleString()}</td>
+                          <td className="px-4 py-4 text-center text-red-700">{s.completionGA}%</td>
+                          <td className="px-4 py-4 text-center text-red-900">{s.remainingGA.toLocaleString()}</td>
+                          <td className="px-4 py-4 text-center text-slate-400">{s.targetOC.toLocaleString()}</td>
+                          <td className="px-4 py-4 text-center text-blue-500">{s.totalOC.toLocaleString()}</td>
+                          <td className="px-4 py-4 text-center text-blue-700">{s.completionOC}%</td>
+                          <td className="px-8 py-4 text-center text-slate-500">{s.avgHours}h</td>
+                        </tr>
+                      ))}
+                      {shops.length === 0 && (
+                        <tr><td colSpan="9" className="px-12 py-4 text-slate-300 italic text-xs border-l-4 border-slate-200">No shops assigned to this manager.</td></tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+                {filteredManagerSummary.length === 0 && (
+                  <tr><td colSpan="9" className="px-8 py-10 text-center text-slate-300 italic font-bold">No data found.</td></tr>
+                )}
+              </tbody>
+            </table>
+          ) : (
+            // --- ALL MANAGERS VIEW: collapsible rows ---
+            <table className="w-full text-left">
+              <thead className="bg-slate-50 text-xs font-black uppercase text-slate-400 tracking-widest">
+                <tr>
+                  <th className="px-8 py-5">Area Manager</th>
+                  <th className="px-4 py-5 text-center">GA Target</th>
+                  <th className="px-4 py-5 text-center">GA Ach.</th>
+                  <th className="px-4 py-5 text-center">%</th>
+                  <th className="px-4 py-5 text-center">Remaining</th>
+                  <th className="px-4 py-5 text-center">OC Target</th>
+                  <th className="px-4 py-5 text-center">OC Ach.</th>
+                  <th className="px-4 py-5 text-center">%</th>
+                  <th className="px-8 py-5 text-center">AVG Hours</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {filteredManagerSummary.length === 0 ? (
+                  <tr><td colSpan="9" className="px-8 py-10 text-center text-slate-300 italic font-bold">No performance records found.</td></tr>
+                ) : filteredManagerSummary.map((m, idx) => {
+                  const shopRows = getShopDetails(m.name);
+                  return (
+                    <React.Fragment key={idx}>
+                      <tr onClick={() => setSelectedManager(selectedManager === m.name ? null : m.name)} className={`cursor-pointer transition-colors ${selectedManager === m.name ? 'bg-red-50' : 'hover:bg-slate-50'}`}>
+                        <td className="px-8 py-5 font-black text-slate-700 flex items-center gap-2">
+                          {selectedManager === m.name ? <ChevronDown size={14} className="text-red-500" /> : <ChevronRight size={14} className="text-slate-300" />}
+                          {m.name}
+                        </td>
+                        <td className="px-4 py-5 text-center font-bold text-slate-400">{m.targetGA.toLocaleString()}</td>
+                        <td className="px-4 py-5 text-center font-black text-red-600">{m.totalGA.toLocaleString()}</td>
+                        <td className="px-4 py-5 text-center font-black text-red-700">{m.completionGA}%</td>
+                        <td className="px-4 py-5 text-center font-bold text-red-900">{m.remainingGA.toLocaleString()}</td>
+                        <td className="px-4 py-5 text-center font-bold text-slate-400">{m.targetOC.toLocaleString()}</td>
+                        <td className="px-4 py-5 text-center font-black text-blue-600">{m.totalOC.toLocaleString()}</td>
+                        <td className="px-4 py-5 text-center font-black text-blue-700">{m.completionOC}%</td>
+                        <td className="px-8 py-5 text-center font-bold text-slate-500">{m.avgHours}h</td>
+                      </tr>
+                      {selectedManager === m.name && shopRows.map((s, si) => (
+                        <tr key={`shop-${si}`} className="bg-slate-50/50 text-xs font-bold">
+                          <td className="px-12 py-3 italic text-slate-500 border-l-4 border-red-500">{s.name}</td>
+                          <td className="px-4 py-3 text-center">{s.targetGA}</td>
+                          <td className="px-4 py-3 text-center text-red-500">{s.totalGA}</td>
+                          <td className="px-4 py-3 text-center">{s.completionGA}%</td>
+                          <td className="px-4 py-3 text-center text-red-900">{s.remainingGA}</td>
+                          <td className="px-4 py-3 text-center">{s.targetOC}</td>
+                          <td className="px-4 py-3 text-center text-blue-500">{s.totalOC}</td>
+                          <td className="px-4 py-3 text-center">{s.completionOC}%</td>
+                          <td className="px-8 py-3 text-center">{s.avgHours}h</td>
+                        </tr>
+                      ))}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
         </div>
       </div>
     </div>
@@ -563,39 +645,133 @@ function SalesList({ records, targets, shops, managers, role, db, appId, userPro
   const assignedManager = userProfile?.assignedManager || '';
   const [filterManager, setFilterManager] = useState(isAdmin ? 'All' : assignedManager);
   const [filterShop, setFilterShop] = useState('All');
-  const [startDate, setStartDate] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
 
   const filtered = useMemo(() => { 
     let data = [...records]; 
     if (filterManager !== 'All') data = data.filter(r => r.areaManager === filterManager); 
     if (filterShop !== 'All') data = data.filter(r => r.shopName === filterShop);
-    if (startDate) data = data.filter(r => r.date === startDate); 
+    if (dateFrom) data = data.filter(r => r.date >= dateFrom);
+    if (dateTo) data = data.filter(r => r.date <= dateTo);
     return data; 
-  }, [records, filterManager, filterShop, startDate]);
+  }, [records, filterManager, filterShop, dateFrom, dateTo]);
 
   const availableShopsForFilter = useMemo(() => {
     if (filterManager === 'All') return shops;
     return shops.filter(s => s.manager === filterManager);
   }, [shops, filterManager]);
 
+  const exportToExcel = () => {
+    const headers = ['Timestamp', 'Date', 'Area Manager', 'Shop Name', 'GA Ach', '% GA Completion', 'OC Ach', 'Hours Worked'];
+    const rows = filtered.map(r => [
+      new Date(r.timestamp).toLocaleString(),
+      r.date,
+      r.areaManager,
+      r.shopName,
+      r.gaAch,
+      targets[r.shopName]?.ga > 0 ? (r.gaAch / targets[r.shopName].ga * 100).toFixed(1) + '%' : '0%',
+      r.ocAch,
+      r.workingHours + 'h'
+    ]);
+    const csvContent = "data:text/csv;charset=utf-8,\uFEFF" + 
+      [headers, ...rows].map(row => row.map(cell => `"${cell}"`).join(',')).join('\n');
+    const link = document.createElement('a');
+    link.setAttribute('href', encodeURI(csvContent));
+    const dateLabel = dateFrom && dateTo ? `${dateFrom}_to_${dateTo}` : new Date().toLocaleDateString();
+    link.setAttribute('download', `Audit_Trail_${dateLabel}.csv`);
+    document.body.appendChild(link); link.click(); document.body.removeChild(link);
+  };
+
+  const clearFilters = () => { setDateFrom(''); setDateTo(''); setFilterManager(isAdmin ? 'All' : assignedManager); setFilterShop('All'); };
+  const hasActiveFilters = dateFrom || dateTo || filterShop !== 'All' || (isAdmin && filterManager !== 'All');
+
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <h2 className="text-3xl font-black text-slate-800 italic uppercase">Audit Trail</h2>
-        <div className="flex flex-wrap gap-2 w-full md:w-auto">
-          <input type="date" className="bg-white p-3 rounded-xl text-xs font-black shadow-sm outline-none flex-1 md:flex-none" value={startDate} onChange={e => setStartDate(e.target.value)} />
-          {isAdmin && (
-            <select value={filterManager} onChange={e => { setFilterManager(e.target.value); setFilterShop('All'); }} className="bg-white p-3 rounded-xl text-xs font-black uppercase tracking-widest shadow-sm outline-none flex-1 md:flex-none">
-              <option value="All">All Managers</option>
-              {managers.map(m => <option key={m} value={m}>{m}</option>)}
-            </select>
-          )}
-          <select value={filterShop} onChange={e => setFilterShop(e.target.value)} className="bg-white p-3 rounded-xl text-xs font-black uppercase tracking-widest shadow-sm outline-none flex-1 md:flex-none">
-            <option value="All">All Shops</option>
-            {availableShopsForFilter.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
-          </select>
+        <div>
+          <h2 className="text-3xl font-black text-slate-800 italic uppercase">Audit Trail</h2>
+          {filtered.length > 0 && <p className="text-xs font-black uppercase text-slate-400 tracking-widest mt-1">{filtered.length} record{filtered.length !== 1 ? 's' : ''} found</p>}
         </div>
+        <button
+          onClick={exportToExcel}
+          className="flex items-center gap-2 px-5 py-3 bg-emerald-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100"
+        >
+          <FileSpreadsheet size={16} /> Export Excel
+        </button>
       </div>
+
+      {/* Filters Panel */}
+      <div className="bg-white rounded-3xl shadow-sm border border-slate-100 p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-black uppercase tracking-widest text-slate-400 flex items-center gap-2"><Filter size={14} /> Filters</h3>
+          {hasActiveFilters && (
+            <button onClick={clearFilters} className="text-xs font-black uppercase tracking-widest text-red-400 hover:text-red-600 flex items-center gap-1 transition-colors">
+              <X size={12} /> Clear All
+            </button>
+          )}
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {/* Date From */}
+          <div className="space-y-1">
+            <label className="text-xs font-black uppercase text-slate-400 tracking-widest px-1">From</label>
+            <input
+              type="date"
+              className="w-full bg-slate-50 p-3 rounded-xl text-xs font-bold outline-none border-2 border-transparent focus:border-red-200 transition-all"
+              value={dateFrom}
+              onChange={e => setDateFrom(e.target.value)}
+            />
+          </div>
+          {/* Date To */}
+          <div className="space-y-1">
+            <label className="text-xs font-black uppercase text-slate-400 tracking-widest px-1">To</label>
+            <input
+              type="date"
+              className="w-full bg-slate-50 p-3 rounded-xl text-xs font-bold outline-none border-2 border-transparent focus:border-red-200 transition-all"
+              value={dateTo}
+              onChange={e => setDateTo(e.target.value)}
+            />
+          </div>
+          {/* Manager Filter (admin only) */}
+          {isAdmin && (
+            <div className="space-y-1">
+              <label className="text-xs font-black uppercase text-slate-400 tracking-widest px-1">Manager</label>
+              <select
+                value={filterManager}
+                onChange={e => { setFilterManager(e.target.value); setFilterShop('All'); }}
+                className="w-full bg-slate-50 p-3 rounded-xl text-xs font-black uppercase tracking-widest outline-none border-2 border-transparent focus:border-red-200 transition-all"
+              >
+                <option value="All">All Managers</option>
+                {managers.map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </div>
+          )}
+          {/* Shop Filter */}
+          <div className="space-y-1">
+            <label className="text-xs font-black uppercase text-slate-400 tracking-widest px-1">Shop</label>
+            <select
+              value={filterShop}
+              onChange={e => setFilterShop(e.target.value)}
+              className="w-full bg-slate-50 p-3 rounded-xl text-xs font-black uppercase tracking-widest outline-none border-2 border-transparent focus:border-red-200 transition-all"
+            >
+              <option value="All">All Shops</option>
+              {availableShopsForFilter.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
+            </select>
+          </div>
+        </div>
+        {/* Active filter badges */}
+        {hasActiveFilters && (
+          <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-50">
+            {dateFrom && <span className="px-3 py-1 bg-red-50 text-red-600 rounded-lg text-xs font-black">From: {dateFrom}</span>}
+            {dateTo && <span className="px-3 py-1 bg-red-50 text-red-600 rounded-lg text-xs font-black">To: {dateTo}</span>}
+            {isAdmin && filterManager !== 'All' && <span className="px-3 py-1 bg-slate-100 text-slate-600 rounded-lg text-xs font-black">{filterManager}</span>}
+            {filterShop !== 'All' && <span className="px-3 py-1 bg-slate-100 text-slate-600 rounded-lg text-xs font-black">{filterShop}</span>}
+          </div>
+        )}
+      </div>
+
+      {/* Table */}
       <div className="bg-white rounded-3xl shadow-xl overflow-hidden overflow-x-auto border border-slate-100">
         <table className="w-full text-left">
           <thead className="bg-[#0F172A] text-slate-400 text-xs font-black uppercase tracking-widest">
