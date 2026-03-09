@@ -585,28 +585,193 @@ function ClosedShopsModal({ shops, onClose }) {
   const cardRef = React.useRef(null);
   const [exporting, setExporting] = useState(false);
   const dateStr = new Date().toLocaleDateString('en-GB', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  const today = new Date().toISOString().split('T')[0];
 
-  const exportAsPng = async () => {
+  const exportAsPng = () => {
     setExporting(true);
     try {
-      // Dynamically load html2canvas from CDN
-      if (!window.html2canvas) {
-        await new Promise((resolve, reject) => {
-          const script = document.createElement('script');
-          script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
-          script.onload = resolve;
-          script.onerror = reject;
-          document.head.appendChild(script);
+      const scale = 2;
+      const W = 480;
+      const rowH = 52;
+      const headerH = 90;
+      const titleBarH = 56;
+      const footerH = 44;
+      const paddingX = 24;
+      const listPaddingY = 16;
+      const emptyH = 120;
+      const bodyH = shops.length === 0 ? emptyH : (shops.length * rowH + (shops.length - 1) * 8 + listPaddingY * 2);
+      const totalH = titleBarH + headerH + bodyH + footerH;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = W * scale;
+      canvas.height = totalH * scale;
+      const ctx = canvas.getContext('2d');
+      ctx.scale(scale, scale);
+
+      // --- rounded rect helper ---
+      const roundRect = (x, y, w, h, r) => {
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.lineTo(x + w - r, y);
+        ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+        ctx.lineTo(x + w, y + h - r);
+        ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+        ctx.lineTo(x + r, y + h);
+        ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+        ctx.lineTo(x, y + r);
+        ctx.quadraticCurveTo(x, y, x + r, y);
+        ctx.closePath();
+      };
+
+      // === BACKGROUND ===
+      ctx.fillStyle = '#F8FAFC';
+      ctx.fillRect(0, 0, W, totalH);
+
+      // === TITLE BAR ===
+      ctx.fillStyle = '#0F172A';
+      ctx.fillRect(0, 0, W, titleBarH);
+
+      // App logo dot
+      ctx.fillStyle = '#EF4444';
+      ctx.beginPath();
+      ctx.arc(paddingX + 6, titleBarH / 2, 5, 0, Math.PI * 2);
+      ctx.fill();
+
+      // App name
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '900 15px system-ui, sans-serif';
+      ctx.fillText('Cash Shop', paddingX + 20, titleBarH / 2 + 5);
+
+      // Separator
+      ctx.fillStyle = '#1E293B';
+      ctx.fillRect(paddingX + 98, titleBarH / 2 - 8, 1, 16);
+
+      // Page label
+      ctx.fillStyle = '#64748B';
+      ctx.font = '700 10px system-ui, sans-serif';
+      ctx.fillText('PERFORMANCE DASHBOARD', paddingX + 108, titleBarH / 2 + 4);
+
+      // === HEADER CARD ===
+      let y = titleBarH;
+      ctx.fillStyle = '#1E293B';
+      ctx.fillRect(0, y, W, headerH);
+
+      // Title
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = 'italic 900 20px system-ui, sans-serif';
+      ctx.fillText('The Closed CashShops', paddingX, y + 32);
+
+      // Date line
+      ctx.fillStyle = '#94A3B8';
+      ctx.font = '700 10px system-ui, sans-serif';
+      ctx.fillText('FOR  ' + dateStr.toUpperCase(), paddingX, y + 52);
+
+      // Count badge
+      const badgeW = 52;
+      const badgeH = 30;
+      const badgeX = W - paddingX - badgeW;
+      const badgeY = y + (headerH - badgeH) / 2;
+      ctx.fillStyle = '#EF4444';
+      roundRect(badgeX, badgeY, badgeW, badgeH, 8);
+      ctx.fill();
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '900 18px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(String(shops.length), badgeX + badgeW / 2, badgeY + badgeH / 2 + 6);
+      ctx.textAlign = 'left';
+
+      // Red accent line at bottom of header
+      ctx.fillStyle = '#EF4444';
+      ctx.fillRect(0, y + headerH - 3, W, 3);
+
+      // === BODY ===
+      y = titleBarH + headerH;
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, y, W, bodyH);
+
+      if (shops.length === 0) {
+        // All active state
+        ctx.fillStyle = '#ECFDF5';
+        ctx.beginPath();
+        ctx.arc(W / 2, y + emptyH / 2 - 10, 22, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#10B981';
+        ctx.font = '900 18px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('✓', W / 2, y + emptyH / 2 - 2);
+        ctx.fillStyle = '#1E293B';
+        ctx.font = '900 14px system-ui, sans-serif';
+        ctx.fillText('All Shops Active!', W / 2, y + emptyH / 2 + 22);
+        ctx.fillStyle = '#94A3B8';
+        ctx.font = '600 11px system-ui, sans-serif';
+        ctx.fillText('Every shop submitted data today.', W / 2, y + emptyH / 2 + 40);
+        ctx.textAlign = 'left';
+      } else {
+        let ry = y + listPaddingY;
+        shops.forEach((shop, i) => {
+          // Row background
+          ctx.fillStyle = '#F8FAFC';
+          roundRect(paddingX, ry, W - paddingX * 2, rowH - 4, 10);
+          ctx.fill();
+
+          // Red left accent
+          ctx.fillStyle = '#EF4444';
+          roundRect(paddingX, ry, 3, rowH - 4, 2);
+          ctx.fill();
+
+          // Shop icon bg
+          ctx.fillStyle = '#FEE2E2';
+          roundRect(paddingX + 12, ry + (rowH - 4) / 2 - 14, 28, 28, 7);
+          ctx.fill();
+
+          // Shop icon (house shape via text)
+          ctx.fillStyle = '#EF4444';
+          ctx.font = '14px system-ui, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText('⌂', paddingX + 12 + 14, ry + (rowH - 4) / 2 + 5);
+          ctx.textAlign = 'left';
+
+          // Shop name
+          ctx.fillStyle = '#1E293B';
+          ctx.font = '900 13px system-ui, sans-serif';
+          ctx.fillText(shop.name, paddingX + 52, ry + (rowH - 4) / 2 - 2);
+
+          // Manager name
+          ctx.fillStyle = '#94A3B8';
+          ctx.font = '700 10px system-ui, sans-serif';
+          ctx.fillText(shop.manager.toUpperCase(), paddingX + 52, ry + (rowH - 4) / 2 + 14);
+
+          // "NO DATA" badge
+          const bdgW = 58;
+          const bdgH = 20;
+          const bdgX = W - paddingX - bdgW;
+          const bdgY = ry + (rowH - 4) / 2 - bdgH / 2;
+          ctx.fillStyle = '#FEE2E2';
+          roundRect(bdgX, bdgY, bdgW, bdgH, 5);
+          ctx.fill();
+          ctx.fillStyle = '#EF4444';
+          ctx.font = '800 9px system-ui, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText('NO DATA', bdgX + bdgW / 2, bdgY + bdgH / 2 + 3);
+          ctx.textAlign = 'left';
+
+          ry += rowH + 8;
         });
       }
-      const canvas = await window.html2canvas(cardRef.current, {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: null,
-        logging: false,
-      });
+
+      // === FOOTER ===
+      y = titleBarH + headerH + bodyH;
+      ctx.fillStyle = '#F1F5F9';
+      ctx.fillRect(0, y, W, footerH);
+      ctx.fillStyle = '#CBD5E1';
+      ctx.font = '700 9px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('CASH SHOP SALES SYSTEM  ·  ONE TEAM ONE GOAL', W / 2, y + footerH / 2 + 3);
+      ctx.textAlign = 'left';
+
+      // Download
       const link = document.createElement('a');
-      link.download = `Closed_Shops_${new Date().toISOString().split('T')[0]}.png`;
+      link.download = `Closed_CashShops_${today}.png`;
       link.href = canvas.toDataURL('image/png');
       link.click();
     } catch (err) {
@@ -638,7 +803,7 @@ function ClosedShopsModal({ shops, onClose }) {
           </div>
 
           {/* Body */}
-          <div style={{ padding: '12px 16px', background: 'white', maxHeight: '55vh', overflowY: 'auto' }}>
+          <div style={{ padding: '12px 16px', background: 'white', maxHeight: '52vh', overflowY: 'auto' }}>
             {shops.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '24px 0' }}>
                 <div style={{ width: 40, height: 40, background: '#ECFDF5', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 10px' }}>
