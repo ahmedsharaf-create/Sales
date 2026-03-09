@@ -572,56 +572,128 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
       </div>
       {/* Closed Shops Modal */}
       {showClosedModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => setShowClosedModal(false)}>
-          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" />
-          <div className="relative bg-white rounded-[2.5rem] shadow-2xl w-full max-w-md overflow-hidden" onClick={e => e.stopPropagation()}>
-            <div className="bg-slate-900 px-8 py-6 flex items-center justify-between">
-              <div>
-                <h3 className="text-white font-black text-lg italic">Closed Shops Today</h3>
-                <p className="text-slate-400 font-black text-xs uppercase tracking-widest mt-0.5">
-                  {new Date().toLocaleDateString('en-GB', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-                </p>
+        <ClosedShopsModal
+          shops={operationalStats.closedShopsList}
+          onClose={() => setShowClosedModal(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+function ClosedShopsModal({ shops, onClose }) {
+  const cardRef = React.useRef(null);
+  const [exporting, setExporting] = useState(false);
+  const dateStr = new Date().toLocaleDateString('en-GB', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+
+  const exportAsPng = async () => {
+    setExporting(true);
+    try {
+      // Dynamically load html2canvas from CDN
+      if (!window.html2canvas) {
+        await new Promise((resolve, reject) => {
+          const script = document.createElement('script');
+          script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+          script.onload = resolve;
+          script.onerror = reject;
+          document.head.appendChild(script);
+        });
+      }
+      const canvas = await window.html2canvas(cardRef.current, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: null,
+        logging: false,
+      });
+      const link = document.createElement('a');
+      link.download = `Closed_Shops_${new Date().toISOString().split('T')[0]}.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    } catch (err) {
+      console.error('PNG export failed:', err);
+    }
+    setExporting(false);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" />
+      <div className="relative w-full max-w-md" onClick={e => e.stopPropagation()}>
+
+        {/* Exportable card — captured by html2canvas */}
+        <div ref={cardRef} style={{ borderRadius: '2rem', overflow: 'hidden', background: 'white', boxShadow: '0 25px 60px rgba(0,0,0,0.25)' }}>
+
+          {/* Header */}
+          <div style={{ background: '#0F172A', padding: '28px 32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+                <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#EF4444' }} />
+                <span style={{ color: 'white', fontWeight: 900, fontSize: 18, fontStyle: 'italic', letterSpacing: '-0.5px' }}>Closed Shops Today</span>
               </div>
-              <button onClick={() => setShowClosedModal(false)} className="p-2 bg-slate-800 hover:bg-slate-700 rounded-xl text-slate-400 hover:text-white transition-all">
-                <X size={18} />
-              </button>
+              <span style={{ color: '#64748B', fontWeight: 800, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.15em' }}>{dateStr}</span>
             </div>
-            <div className="p-6 max-h-[60vh] overflow-y-auto">
-              {operationalStats.closedShopsList.length === 0 ? (
-                <div className="text-center py-10">
-                  <div className="w-16 h-16 bg-emerald-50 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <Check size={28} className="text-emerald-500" />
-                  </div>
-                  <p className="font-black text-slate-800 text-lg">All Shops Active!</p>
-                  <p className="text-slate-400 font-bold text-sm mt-1">Every shop has submitted data today.</p>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {operationalStats.closedShopsList.map((shop, i) => (
-                    <div key={i} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl group hover:bg-red-50 transition-colors">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 bg-red-100 rounded-xl flex items-center justify-center">
-                          <Store size={14} className="text-red-500" />
-                        </div>
-                        <div>
-                          <p className="font-black text-slate-800 text-sm">{shop.name}</p>
-                          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">{shop.manager}</p>
-                        </div>
-                      </div>
-                      <span className="text-xs font-black uppercase tracking-widest text-red-400 bg-red-50 group-hover:bg-red-100 px-3 py-1 rounded-lg transition-colors">No Data</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="px-6 pb-6 pt-2 border-t border-slate-50">
-              <p className="text-center text-xs font-black uppercase text-slate-300 tracking-widest">
-                {operationalStats.closedShopsList.length} of {operationalStats.closedShopsList.length + (operationalStats.closedShopsList.length === 0 ? 0 : 0)} shops without today's entry
-              </p>
+            <div style={{ background: '#EF4444', color: 'white', borderRadius: 12, padding: '6px 14px', fontWeight: 900, fontSize: 22 }}>
+              {shops.length}
             </div>
           </div>
+
+          {/* Body */}
+          <div style={{ padding: '20px 24px', background: 'white' }}>
+            {shops.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '40px 0' }}>
+                <div style={{ width: 56, height: 56, background: '#ECFDF5', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                </div>
+                <p style={{ fontWeight: 900, color: '#1E293B', fontSize: 16, margin: 0 }}>All Shops Active!</p>
+                <p style={{ fontWeight: 600, color: '#94A3B8', fontSize: 13, marginTop: 6 }}>Every shop has submitted data today.</p>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {shops.map((shop, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: '#F8FAFC', borderRadius: 16, borderLeft: '3px solid #EF4444' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <div style={{ width: 32, height: 32, background: '#FEE2E2', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#EF4444" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                      </div>
+                      <div>
+                        <p style={{ fontWeight: 900, color: '#1E293B', fontSize: 13, margin: 0 }}>{shop.name}</p>
+                        <p style={{ fontWeight: 700, color: '#94A3B8', fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.1em', margin: 0 }}>{shop.manager}</p>
+                      </div>
+                    </div>
+                    <span style={{ fontSize: 10, fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.1em', color: '#EF4444', background: '#FEE2E2', padding: '4px 10px', borderRadius: 8 }}>No Data</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div style={{ padding: '14px 24px 20px', borderTop: '1px solid #F1F5F9', textAlign: 'center' }}>
+            <span style={{ fontSize: 10, fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.2em', color: '#CBD5E1' }}>
+              Cash Shop Sales System — ONE Team One Goal
+            </span>
+          </div>
         </div>
-      )}
+
+        {/* Action buttons — outside the exportable card */}
+        <div className="flex gap-3 mt-4">
+          <button
+            onClick={exportAsPng}
+            disabled={exporting}
+            className="flex-1 flex items-center justify-center gap-2 bg-white text-slate-800 py-4 rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg hover:bg-slate-50 transition-all"
+          >
+            {exporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+            {exporting ? 'Exporting...' : 'Export as PNG'}
+          </button>
+          <button
+            onClick={onClose}
+            className="px-6 py-4 bg-slate-800/80 text-slate-300 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-700 transition-all"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+      </div>
     </div>
   );
 }
