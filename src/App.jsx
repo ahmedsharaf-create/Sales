@@ -338,18 +338,18 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
     });
   };
 
+  const [showClosedModal, setShowClosedModal] = useState(false);
+
   const operationalStats = useMemo(() => {
     const today = new Date().toISOString().split('T')[0];
     const relevantShops = isSingleManagerView
       ? shops.filter(s => s.manager === filterManager)
       : (isAdmin ? shops : shops.filter(s => s.manager === assignedManager));
-    const activeShopNamesToday = [...new Set(records.filter(r => r.date === today).map(r => r.shopName))];
+    const activeShopNamesSet = new Set(records.filter(r => r.date === today).map(r => r.shopName));
     const totalGA = filteredRecords.reduce((acc, r) => acc + (r.gaAch || 0), 0);
     const totalOC = filteredRecords.reduce((acc, r) => acc + (r.ocAch || 0), 0);
-    return { 
-      totalGA, totalOC, 
-      closedShopsToday: Math.max(0, relevantShops.length - activeShopNamesToday.filter(name => relevantShops.some(s => s.name === name)).length) 
-    };
+    const closedShopsList = relevantShops.filter(s => !activeShopNamesSet.has(s.name));
+    return { totalGA, totalOC, closedShopsToday: closedShopsList.length, closedShopsList };
   }, [records, shops, filteredRecords, isAdmin, assignedManager, filterManager, isSingleManagerView]);
 
   const exportSummaryExcel = () => {
@@ -413,10 +413,16 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
             <p className="text-xs font-black uppercase text-blue-100 mb-1">{isSingleManagerView ? filterManager + ' — ' : ''}Total OC Achieved</p>
             <h4 className="text-3xl font-black italic">{operationalStats.totalOC.toLocaleString()}</h4>
           </div>
-          <div className="bg-slate-900 p-6 rounded-3xl text-white shadow-xl shadow-slate-200">
+          <button
+            onClick={() => setShowClosedModal(true)}
+            className="w-full bg-slate-900 p-6 rounded-3xl text-white shadow-xl shadow-slate-200 text-left hover:bg-slate-800 transition-all group cursor-pointer"
+          >
             <p className="text-xs font-black uppercase text-slate-400 mb-1">Closed Shops Today</p>
-            <h4 className="text-3xl font-black italic">{operationalStats.closedShopsToday}</h4>
-          </div>
+            <div className="flex items-end justify-between">
+              <h4 className="text-3xl font-black italic">{operationalStats.closedShopsToday}</h4>
+              <span className="text-xs font-black uppercase text-slate-500 group-hover:text-slate-300 transition-colors tracking-widest">View List →</span>
+            </div>
+          </button>
         </div>
       </div>
 
@@ -564,6 +570,58 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
           )}
         </div>
       </div>
+      {/* Closed Shops Modal */}
+      {showClosedModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => setShowClosedModal(false)}>
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" />
+          <div className="relative bg-white rounded-[2.5rem] shadow-2xl w-full max-w-md overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="bg-slate-900 px-8 py-6 flex items-center justify-between">
+              <div>
+                <h3 className="text-white font-black text-lg italic">Closed Shops Today</h3>
+                <p className="text-slate-400 font-black text-xs uppercase tracking-widest mt-0.5">
+                  {new Date().toLocaleDateString('en-GB', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                </p>
+              </div>
+              <button onClick={() => setShowClosedModal(false)} className="p-2 bg-slate-800 hover:bg-slate-700 rounded-xl text-slate-400 hover:text-white transition-all">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-6 max-h-[60vh] overflow-y-auto">
+              {operationalStats.closedShopsList.length === 0 ? (
+                <div className="text-center py-10">
+                  <div className="w-16 h-16 bg-emerald-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <Check size={28} className="text-emerald-500" />
+                  </div>
+                  <p className="font-black text-slate-800 text-lg">All Shops Active!</p>
+                  <p className="text-slate-400 font-bold text-sm mt-1">Every shop has submitted data today.</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {operationalStats.closedShopsList.map((shop, i) => (
+                    <div key={i} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl group hover:bg-red-50 transition-colors">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 bg-red-100 rounded-xl flex items-center justify-center">
+                          <Store size={14} className="text-red-500" />
+                        </div>
+                        <div>
+                          <p className="font-black text-slate-800 text-sm">{shop.name}</p>
+                          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">{shop.manager}</p>
+                        </div>
+                      </div>
+                      <span className="text-xs font-black uppercase tracking-widest text-red-400 bg-red-50 group-hover:bg-red-100 px-3 py-1 rounded-lg transition-colors">No Data</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="px-6 pb-6 pt-2 border-t border-slate-50">
+              <p className="text-center text-xs font-black uppercase text-slate-300 tracking-widest">
+                {operationalStats.closedShopsList.length} of {operationalStats.closedShopsList.length + (operationalStats.closedShopsList.length === 0 ? 0 : 0)} shops without today's entry
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -663,7 +721,7 @@ function SalesList({ records, targets, shops, managers, role, db, appId, userPro
   }, [shops, filterManager]);
 
   const exportToExcel = () => {
-    const headers = ['Timestamp', 'Date', 'Area Manager', 'Shop Name', 'GA Ach', '% GA Completion', 'OC Ach', 'Hours Worked'];
+    const headers = ['Timestamp', 'Date', 'Area Manager', 'Shop Name', 'GA Ach', 'GA %', 'OC Ach', 'OC %', 'Hours Worked'];
     const rows = filtered.map(r => [
       new Date(r.timestamp).toLocaleString(),
       r.date,
@@ -672,6 +730,7 @@ function SalesList({ records, targets, shops, managers, role, db, appId, userPro
       r.gaAch,
       targets[r.shopName]?.ga > 0 ? (r.gaAch / targets[r.shopName].ga * 100).toFixed(1) + '%' : '0%',
       r.ocAch,
+      targets[r.shopName]?.oc > 0 ? (r.ocAch / targets[r.shopName].oc * 100).toFixed(1) + '%' : '0%',
       r.workingHours + 'h'
     ]);
     const csvContent = "data:text/csv;charset=utf-8,\uFEFF" + 
@@ -781,15 +840,16 @@ function SalesList({ records, targets, shops, managers, role, db, appId, userPro
               <th className="px-8 py-6">Area Manager</th>
               <th className="px-8 py-6">Shop Name</th>
               <th className="px-8 py-6 text-center">GA Ach</th>
-              <th className="px-8 py-6 text-center">% Completion</th>
+              <th className="px-8 py-6 text-center">GA %</th>
               <th className="px-8 py-6 text-center">OC Ach</th>
+              <th className="px-8 py-6 text-center">OC %</th>
               <th className="px-8 py-6 text-center">Hours Worked</th>
               {role === 'admin' && <th className="px-8 py-6 text-right">Actions</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-50 font-bold tabular-nums">
             {filtered.length === 0 ? (
-              <tr><td colSpan={role === 'admin' ? 9 : 8} className="px-8 py-10 text-center text-slate-300 italic">No records found matching filters.</td></tr>
+              <tr><td colSpan={role === 'admin' ? 10 : 9} className="px-8 py-10 text-center text-slate-300 italic">No records found matching filters.</td></tr>
             ) : filtered.map(r => (
               <tr key={r.id} className="hover:bg-slate-50 transition-colors">
                 <td className="px-8 py-5 text-slate-400 text-xs">{new Date(r.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
@@ -799,6 +859,7 @@ function SalesList({ records, targets, shops, managers, role, db, appId, userPro
                 <td className="px-8 py-5 text-center text-red-600">+{r.gaAch}</td>
                 <td className="px-8 py-5 text-center text-xs text-red-700">{(targets[r.shopName]?.ga > 0 ? (r.gaAch / targets[r.shopName].ga * 100).toFixed(1) : 0)}%</td>
                 <td className="px-8 py-5 text-center text-blue-600">+{r.ocAch}</td>
+                <td className="px-8 py-5 text-center text-xs text-blue-700">{(targets[r.shopName]?.oc > 0 ? (r.ocAch / targets[r.shopName].oc * 100).toFixed(1) : 0)}%</td>
                 <td className="px-8 py-5 text-center text-slate-400 text-xs">{r.workingHours}h</td>
                 {role === 'admin' && <td className="px-8 py-5 text-right"><button onClick={async () => { if(confirm("Delete record?")) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sales', r.id)); }} className="text-slate-200 hover:text-red-500 transition-colors"><Trash2 size={16} /></button></td>}
               </tr>
