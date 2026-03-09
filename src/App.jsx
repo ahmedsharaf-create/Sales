@@ -629,7 +629,7 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
 function SalesCollectionForm({ areaManagers, shops, user, db, appId, userProfile }) {
   const isAdmin = userProfile?.role === 'admin';
   const assigned = userProfile?.assignedManager || '';
-  const [formData, setFormData] = useState({ areaManager: isAdmin ? '' : assigned, shopName: '', gaAch: '', ocAch: '', workingHours: '', note: '', date: new Date().toISOString().split('T')[0] });
+  const [formData, setFormData] = useState({ areaManager: isAdmin ? '' : assigned, shopName: '', gaAch: '', ocAch: '', workingHours: '', note: '', date: '' });
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
 
@@ -651,7 +651,7 @@ function SalesCollectionForm({ areaManagers, shops, user, db, appId, userProfile
         submittedBy: user.uid 
       }); 
       setSuccess(true); 
-      setFormData({ areaManager: isAdmin ? '' : assigned, shopName: '', gaAch: '', ocAch: '', workingHours: '', note: '', date: new Date().toISOString().split('T')[0] }); 
+      setFormData({ areaManager: isAdmin ? '' : assigned, shopName: '', gaAch: '', ocAch: '', workingHours: '', note: '', date: '' }); 
       setTimeout(() => setSuccess(false), 3000); 
     } catch (err) { console.error("Submit error:", err); } 
     setSubmitting(false);
@@ -750,7 +750,7 @@ function SalesList({ records, targets, shops, managers, role, db, appId, userPro
       {/* Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h2 className="text-3xl font-black text-slate-800 italic uppercase">Audit Trail</h2>
+          <h2 className="text-3xl font-black text-slate-800 italic uppercase">Sales History</h2>
           {filtered.length > 0 && <p className="text-xs font-black uppercase text-slate-400 tracking-widest mt-1">{filtered.length} record{filtered.length !== 1 ? 's' : ''} found</p>}
         </div>
         <button
@@ -1077,7 +1077,7 @@ function Navigation({ view, setView, role, onLogout }) {
   const links = [
     { id: 'dashboard', label: 'Dashboard', icon: BarChart3, roles: ['admin', 'user'] },
     { id: 'collection', label: 'Sales Entry', icon: PlusCircle, roles: ['admin', 'user'] },
-    { id: 'reports', label: 'Audit Trail', icon: ClipboardList, roles: ['admin', 'user'] },
+    { id: 'reports', label: 'Sales History', icon: ClipboardList, roles: ['admin', 'user'] },
     { id: 'targets', label: 'Targets', icon: Target, roles: ['admin'] },
     { id: 'userSearch', label: 'Team', icon: UsersIcon, roles: ['admin'] },
     { id: 'admin', label: 'Admin', icon: Settings, roles: ['admin'] }
