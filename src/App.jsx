@@ -349,8 +349,10 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
     const totalGA = filteredRecords.reduce((acc, r) => acc + (r.gaAch || 0), 0);
     const totalOC = filteredRecords.reduce((acc, r) => acc + (r.ocAch || 0), 0);
     const closedShopsList = relevantShops.filter(s => !activeShopNamesSet.has(s.name));
-    return { totalGA, totalOC, closedShopsToday: closedShopsList.length, closedShopsList };
-  }, [records, shops, filteredRecords, isAdmin, assignedManager, filterManager, isSingleManagerView]);
+    const totalTargetGA = relevantShops.reduce((acc, s) => acc + (targets[s.name]?.ga || 0), 0);
+    const totalTargetOC = relevantShops.reduce((acc, s) => acc + (targets[s.name]?.oc || 0), 0);
+    return { totalGA, totalOC, totalTargetGA, totalTargetOC, closedShopsToday: closedShopsList.length, closedShopsList };
+  }, [records, shops, targets, filteredRecords, isAdmin, assignedManager, filterManager, isSingleManagerView]);
 
   const exportSummaryExcel = () => {
     const headers = ['Manager', 'GA Target', 'GA Ach.', 'GA %', 'GA Remaining', 'OC Target', 'OC Ach.', 'OC %', 'Avg Hours'];
@@ -408,10 +410,26 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
           <div className="bg-red-600 p-6 rounded-3xl text-white shadow-xl shadow-red-100">
             <p className="text-xs font-black uppercase text-red-100 mb-1">{isSingleManagerView ? filterManager + ' — ' : ''}Total GA Achieved</p>
             <h4 className="text-3xl font-black italic">{operationalStats.totalGA.toLocaleString()}</h4>
+            <div className="mt-3 pt-3 border-t border-red-500 flex items-center justify-between">
+              <span className="text-xs font-black text-red-200 uppercase tracking-widest">Target</span>
+              <span className="text-sm font-black text-white">{operationalStats.totalGA.toLocaleString()} / {operationalStats.totalTargetGA.toLocaleString()}</span>
+            </div>
+            <div className="mt-2 h-1.5 bg-red-500 rounded-full overflow-hidden">
+              <div className="h-full bg-white rounded-full transition-all" style={{ width: operationalStats.totalTargetGA > 0 ? Math.min(100, (operationalStats.totalGA / operationalStats.totalTargetGA * 100)).toFixed(1) + '%' : '0%' }} />
+            </div>
+            <p className="text-xs font-black text-red-200 mt-1 text-right">{operationalStats.totalTargetGA > 0 ? (operationalStats.totalGA / operationalStats.totalTargetGA * 100).toFixed(1) : 0}%</p>
           </div>
           <div className="bg-blue-600 p-6 rounded-3xl text-white shadow-xl shadow-blue-100">
             <p className="text-xs font-black uppercase text-blue-100 mb-1">{isSingleManagerView ? filterManager + ' — ' : ''}Total OC Achieved</p>
             <h4 className="text-3xl font-black italic">{operationalStats.totalOC.toLocaleString()}</h4>
+            <div className="mt-3 pt-3 border-t border-blue-500 flex items-center justify-between">
+              <span className="text-xs font-black text-blue-200 uppercase tracking-widest">Target</span>
+              <span className="text-sm font-black text-white">{operationalStats.totalOC.toLocaleString()} / {operationalStats.totalTargetOC.toLocaleString()}</span>
+            </div>
+            <div className="mt-2 h-1.5 bg-blue-500 rounded-full overflow-hidden">
+              <div className="h-full bg-white rounded-full transition-all" style={{ width: operationalStats.totalTargetOC > 0 ? Math.min(100, (operationalStats.totalOC / operationalStats.totalTargetOC * 100)).toFixed(1) + '%' : '0%' }} />
+            </div>
+            <p className="text-xs font-black text-blue-200 mt-1 text-right">{operationalStats.totalTargetOC > 0 ? (operationalStats.totalOC / operationalStats.totalTargetOC * 100).toFixed(1) : 0}%</p>
           </div>
           <button
             onClick={() => setShowClosedModal(true)}
