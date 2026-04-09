@@ -67,18 +67,9 @@ import {
   History
 } from 'lucide-react';
 
-// --- Firebase Configuration (Using environment variables to fix API Key error) ---
-const firebaseConfig = typeof __firebase_config !== 'undefined' 
-  ? JSON.parse(__firebase_config) 
-  : {
-      apiKey: "", // Key provided at runtime
-      authDomain: "",
-      projectId: "",
-      storageBucket: "",
-      messagingSenderId: "",
-      appId: ""
-    };
-
+// --- Firebase Configuration (Environment Variables Pattern) ---
+const firebaseConfig = JSON.parse(__firebase_config);
+// Sanitize appId: Firestore document paths fail if a segment contains a '/'
 const rawAppId = typeof __app_id !== 'undefined' ? __app_id : 'pyramids-sales-v1';
 const appId = rawAppId.replace(/\//g, '_');
 
@@ -94,7 +85,7 @@ export default function App() {
   const [userProfile, setUserProfile] = useState(null);
   const [view, setView] = useState('login'); 
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
 
   const [areaManagers, setAreaManagers] = useState([]);
   const [shops, setShops] = useState([]); 
@@ -102,48 +93,48 @@ export default function App() {
   const [salesRecords, setSalesRecords] = useState([]);
   const [allUsers, setAllUsers] = useState([]);
 
-  // (1) Mandatory Auth Pattern: Initial connection to Firebase
+  // (1) Auth Setup
   useEffect(() => {
     const initAuth = async () => {
       try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
           await signInWithCustomToken(auth, __initial_auth_token);
         } else {
-          // If no custom token, we sign in anonymously first to satisfy Firestore rules
-          // while waiting for the user to log in via the LoginPortal
           await signInAnonymously(auth);
         }
       } catch (err) {
-        console.error("Firebase Auth Init Error:", err);
+        console.error("Auth init error:", err);
+      } finally {
+        setAuthReady(true);
       }
     };
     initAuth();
 
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       setUser(u);
-      // We only consider it "logged out" if the user was anonymous and we want them to login,
-      // or if they explicitly signed out.
       if (!u) {
         setUserProfile(null);
         setView('login');
-        setLoading(false);
-      } else if (u.isAnonymous && view === 'login') {
-        // Stay on login if anonymous but haven't fetched profile
         setLoading(false);
       }
     });
     return () => unsubscribe();
   }, []);
 
-  // (2) Fetch User Profile
+  // (2) Profile Fetch
   useEffect(() => {
-    if (!user || user.isAnonymous) return;
+    if (!authReady || !user || user.isAnonymous) {
+      if (authReady && user?.isAnonymous) setLoading(false);
+      return;
+    }
     
     const fetchProfile = async () => {
       setLoading(true);
       try {
+        // Correct path construction: artifacts/{appId}/public/data/users/{userId}
         const userDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'users', user.uid);
         const userDoc = await getDoc(userDocRef);
+        
         if (userDoc.exists()) {
           const data = userDoc.data();
           setUserProfile(data);
@@ -157,75 +148,60 @@ export default function App() {
         }
       } catch (e) {
         console.error("Profile fetch error:", e);
-        setError("Database access error.");
       } finally {
         setLoading(false);
       }
     };
     fetchProfile();
-  }, [user]);
+  }, [user, authReady]);
 
-  // (3) Real-time Data Listeners with error handling
+  // (3) Real-time Data Listeners
   useEffect(() => {
-    if (!user || !userProfile) return;
+    if (!user || !userProfile || user.isAnonymous) return;
 
     const settingsRef = doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config');
-    const unsubSettings = onSnapshot(settingsRef, 
-      (docSnap) => {
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          setAreaManagers(data.areaManagers || []);
-          setShops(data.shops || []);
-          setTargets(data.targets || {});
-        }
-      },
-      (err) => console.error("Settings listener error:", err)
-    );
+    const unsubSettings = onSnapshot(settingsRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setAreaManagers(data.areaManagers || []);
+        setShops(data.shops || []);
+        setTargets(data.targets || {});
+      }
+    });
 
     const salesRef = collection(db, 'artifacts', appId, 'public', 'data', 'sales');
-    const unsubSales = onSnapshot(salesRef, 
-      (snapshot) => {
-        const records = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-        const sorted = records.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-        
-        if (userProfile.role === 'admin') {
-          setSalesRecords(sorted);
-        } else {
-          setSalesRecords(sorted.filter(r => 
-            r.areaManager === userProfile.assignedManager || r.submittedBy === user.uid
-          ));
-        }
-      },
-      (err) => console.error("Sales listener error:", err)
-    );
+    const unsubSales = onSnapshot(salesRef, (snapshot) => {
+      const records = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      const sorted = records.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      
+      if (userProfile.role === 'admin') {
+        setSalesRecords(sorted);
+      } else {
+        setSalesRecords(sorted.filter(r => 
+          r.areaManager === userProfile.assignedManager || r.submittedBy === user.uid
+        ));
+      }
+    });
 
     let unsubUsers = () => {};
     if (userProfile.role === 'admin') {
       const usersRef = collection(db, 'artifacts', appId, 'public', 'data', 'users');
-      unsubUsers = onSnapshot(usersRef, 
-        (snapshot) => {
-          setAllUsers(snapshot.docs.map(d => ({ uid: d.id, ...d.data() })));
-        },
-        (err) => console.error("Users listener error:", err)
-      );
+      unsubUsers = onSnapshot(usersRef, (snapshot) => {
+        setAllUsers(snapshot.docs.map(d => ({ uid: d.id, ...d.data() })));
+      });
     }
 
-    return () => { 
-      unsubSettings(); 
-      unsubSales(); 
-      unsubUsers();
-    };
+    return () => { unsubSettings(); unsubSales(); unsubUsers(); };
   }, [user, userProfile]);
 
   const handleLogout = async () => {
     setLoading(true);
     await signOut(auth);
-    // After sign out, system instruction says we should ideally sign in anonymously again 
-    // to maintain a session for Firestore rules if needed, but onAuthStateChanged handles UI.
+    await signInAnonymously(auth);
     setLoading(false);
   };
 
-  if (loading) return <LoadingScreen />;
+  if (loading || !authReady) return <LoadingScreen />;
   if (view === 'login') return <LoginPortal onSignIn={() => setView('dashboard')} />;
   if (view === 'onboarding') return <Onboarding user={user} setView={setView} setUserProfile={setUserProfile} />;
   if (view === 'waiting') return <WaitingRoom onLogout={handleLogout} />;
@@ -247,7 +223,7 @@ export default function App() {
   );
 }
 
-// --- Dashboard Component (Current Month Performance) ---
+// --- Dashboard Component (Performance Focus) ---
 function Dashboard({ setView, records, targets, shops, managers, userProfile }) {
   const isAdmin = userProfile?.role === 'admin';
   const assignedManager = userProfile?.assignedManager || '';
@@ -279,15 +255,15 @@ function Dashboard({ setView, records, targets, shops, managers, userProfile }) 
             <LayoutDashboard className="text-white" size={24} />
           </div>
           <div>
-            <h2 className="text-2xl font-black text-slate-800 tracking-tight italic">Performance Dashboard</h2>
-            <p className="text-xs font-black uppercase text-slate-400 tracking-widest">{new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' })} Status</p>
+            <h2 className="text-2xl font-black text-slate-800 tracking-tight italic">Live Performance</h2>
+            <p className="text-xs font-black uppercase text-slate-400 tracking-widest">{new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' })} Dashboard</p>
           </div>
         </div>
         <button 
           onClick={() => setView('archive')}
           className="flex items-center gap-2 px-6 py-3 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-slate-800 transition-all shadow-lg"
         >
-          <Archive size={16} /> Open Sales Archive
+          <Archive size={16} /> History Archive
         </button>
       </div>
 
@@ -310,50 +286,22 @@ function Dashboard({ setView, records, targets, shops, managers, userProfile }) 
           <h4 className="text-4xl font-black italic">{stats.totalOC.toLocaleString()}</h4>
         </div>
         <div className="bg-slate-900 p-8 rounded-[2.5rem] text-white shadow-xl shadow-slate-200">
-          <p className="text-xs font-black uppercase text-slate-400 mb-1">Shops Pending Today</p>
+          <p className="text-xs font-black uppercase text-slate-400 mb-1">Inactive Branches Today</p>
           <h4 className="text-4xl font-black italic">{stats.closedShopsToday}</h4>
-        </div>
-      </div>
-
-      <div className="bg-white rounded-[2.5rem] shadow-sm border border-slate-100 p-8">
-        <h3 className="font-black text-slate-800 text-lg uppercase tracking-tight mb-6">Recent Sales Records</h3>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <thead className="text-xs font-black uppercase text-slate-400 border-b border-slate-50">
-              <tr>
-                <th className="pb-4 px-2">Date</th>
-                <th className="pb-4 px-2">Shop</th>
-                <th className="pb-4 px-2 text-center">GA</th>
-                <th className="pb-4 px-2 text-center">OC</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50">
-              {currentMonthRecords.slice(0, 8).map(r => (
-                <tr key={r.id} className="text-sm font-bold">
-                  <td className="py-4 px-2 text-slate-400">{r.date}</td>
-                  <td className="py-4 px-2 text-slate-700 font-black">{r.shopName}</td>
-                  <td className="py-4 px-2 text-center text-red-600">{r.gaAch}</td>
-                  <td className="py-4 px-2 text-center text-blue-600">{r.ocAch}</td>
-                </tr>
-              ))}
-              {currentMonthRecords.length === 0 && (
-                <tr><td colSpan="4" className="py-12 text-center text-slate-300 italic">No sales activity reported yet for this month.</td></tr>
-              )}
-            </tbody>
-          </table>
         </div>
       </div>
     </div>
   );
 }
 
-// --- Sales Archive Component ---
+// --- Sales Archive Component (New Feature) ---
 function SalesArchive({ records, targets, shops, managers, userProfile }) {
   const [selectedMonth, setSelectedMonth] = useState('');
   const currentMonth = getCurrentMonth();
 
   const months = useMemo(() => {
     const uniqueMonths = [...new Set(records.map(r => r.date?.substring(0, 7)))];
+    // Sort and exclude current month from archive view
     return uniqueMonths.filter(m => m !== currentMonth).sort().reverse();
   }, [records, currentMonth]);
 
@@ -376,8 +324,8 @@ function SalesArchive({ records, targets, shops, managers, userProfile }) {
             <Archive className="text-white" size={24} />
           </div>
           <div>
-            <h2 className="text-2xl font-black text-slate-800 tracking-tight italic uppercase">Sales Archive</h2>
-            <p className="text-xs font-black uppercase text-slate-400 tracking-widest">Historical Performance Access</p>
+            <h2 className="text-2xl font-black text-slate-800 tracking-tight italic uppercase">Historical Archive</h2>
+            <p className="text-xs font-black uppercase text-slate-400 tracking-widest">Review past months activity</p>
           </div>
         </div>
         <select 
@@ -397,7 +345,7 @@ function SalesArchive({ records, targets, shops, managers, userProfile }) {
       {!selectedMonth ? (
         <div className="h-64 flex flex-col items-center justify-center text-slate-300 space-y-4 bg-white rounded-[2.5rem] border border-dashed border-slate-200">
           <History size={48} className="opacity-20" />
-          <p className="font-black text-xs uppercase tracking-widest">Select a period to view archives</p>
+          <p className="font-black text-xs uppercase tracking-widest">Select a period to start audit</p>
         </div>
       ) : (
         <>
@@ -414,32 +362,26 @@ function SalesArchive({ records, targets, shops, managers, userProfile }) {
 
           <div className="bg-white rounded-[2.5rem] shadow-sm border border-slate-100 overflow-hidden">
             <div className="p-8 border-b border-slate-50 flex justify-between items-center">
-              <h3 className="font-black text-slate-800 text-lg uppercase tracking-tight">
-                Records for {new Date(selectedMonth + "-01").toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-              </h3>
-              <span className="bg-slate-100 text-slate-500 px-4 py-1 rounded-full text-[10px] font-black">{filteredRecords.length} records</span>
+              <h3 className="font-black text-slate-800 text-lg uppercase tracking-tight">Records Registry</h3>
+              <span className="bg-slate-100 text-slate-500 px-4 py-1 rounded-full text-[10px] font-black">{filteredRecords.length} entries</span>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-left">
                 <thead className="text-xs font-black uppercase text-slate-400 bg-slate-50">
                   <tr>
                     <th className="py-5 px-8">Date</th>
-                    <th className="py-5 px-4">Manager</th>
-                    <th className="py-5 px-4">Branch</th>
+                    <th className="py-5 px-4">Shop</th>
                     <th className="py-5 px-4 text-center">GA</th>
                     <th className="py-5 px-4 text-center">OC</th>
-                    <th className="py-5 px-8 text-center">Hours</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50 font-bold">
                   {filteredRecords.map(r => (
                     <tr key={r.id} className="hover:bg-slate-50 transition-colors">
                       <td className="py-4 px-8 text-slate-400 text-xs">{r.date}</td>
-                      <td className="py-4 px-4 text-slate-800 text-sm">{r.areaManager}</td>
-                      <td className="py-4 px-4 text-slate-600 italic text-sm">{r.shopName}</td>
+                      <td className="py-4 px-4 text-slate-700 text-sm">{r.shopName}</td>
                       <td className="py-4 px-4 text-center text-red-600 font-black">+{r.gaAch}</td>
                       <td className="py-4 px-4 text-center text-blue-600 font-black">+{r.ocAch}</td>
-                      <td className="py-4 px-8 text-center text-slate-300 text-xs">{r.workingHours}h</td>
                     </tr>
                   ))}
                 </tbody>
@@ -452,63 +394,41 @@ function SalesArchive({ records, targets, shops, managers, userProfile }) {
   );
 }
 
-// --- Login Portal ---
-function LoginPortal({ onSignIn }) {
-  const [authMode, setAuthMode] = useState('login');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [message, setMessage] = useState('');
-  const [loading, setLoading] = useState(false);
-
-  const handleAuth = async (e) => {
-    e.preventDefault(); 
-    setError(''); 
-    setMessage(''); 
-    setLoading(true);
-    try { 
-      if (authMode === 'signup') {
-        await createUserWithEmailAndPassword(auth, email, password);
-      } else if (authMode === 'login') {
-        await signInWithEmailAndPassword(auth, email, password);
-      } else {
-        await sendPasswordResetEmail(auth, email);
-        setMessage("Password reset instructions sent!");
-      } 
-      onSignIn();
-    } catch (err) { 
-      setError(err.message.replace('Firebase:', '').replace('Error (auth/', '').replace(').', '')); 
-    } 
-    setLoading(false);
-  };
-
+// --- Waiting Room (Customized UI) ---
+function WaitingRoom({ onLogout }) {
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#0F172A] p-4 text-center">
-      <div className="w-full max-w-sm bg-white rounded-[3.5rem] p-12 shadow-2xl space-y-8 animate-in zoom-in duration-500">
-        <div className="space-y-2">
-          <ShieldCheck className="text-red-600 mx-auto" size={56} />
-          <h1 className="text-3xl font-black text-slate-800 italic tracking-tighter uppercase">Sales System</h1>
-          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Authenticated Access Only</p>
+      <div className="max-w-md w-full bg-white rounded-[3rem] p-12 shadow-2xl space-y-8 animate-in zoom-in duration-500">
+        <div className="flex justify-center">
+          <div className="p-4 bg-red-50 rounded-full">
+            <ShieldCheck className="text-red-600" size={60} />
+          </div>
         </div>
-        <form onSubmit={handleAuth} className="space-y-4">
-          <input required type="email" placeholder="Email Address" className="w-full bg-slate-50 p-5 rounded-2xl font-bold border-none outline-none text-center" value={email} onChange={e => setEmail(e.target.value)} />
-          {authMode !== 'forgot' && <input required type="password" placeholder="Password" className="w-full bg-slate-50 p-5 rounded-2xl font-bold border-none outline-none text-center" value={password} onChange={e => setPassword(e.target.value)} />}
-          {error && <div className="p-4 bg-red-50 text-red-500 rounded-2xl text-[10px] font-black uppercase tracking-wider">{error}</div>}
-          {message && <div className="p-4 bg-emerald-50 text-emerald-600 rounded-2xl text-[10px] font-black uppercase tracking-wider">{message}</div>}
-          <button disabled={loading} className="w-full bg-slate-900 text-white py-5 rounded-3xl font-black text-[10px] uppercase tracking-[0.2em] shadow-xl active:scale-95 transition-all">
-            {loading ? <Loader2 className="animate-spin mx-auto" size={24} /> : (authMode === 'forgot' ? 'Reset Password' : authMode === 'signup' ? 'Create Account' : 'Authenticate')}
-          </button>
-        </form>
-        <div className="flex flex-col gap-3 pt-4 border-t border-slate-50">
-          <button onClick={() => setAuthMode(authMode === 'forgot' ? 'login' : 'forgot')} className="text-slate-400 font-black text-[10px] uppercase tracking-widest hover:text-red-600 transition-colors">{authMode === 'forgot' ? 'Back to Login' : 'Forgot Password?'}</button>
-          <button onClick={() => setAuthMode(authMode === 'signup' ? 'login' : 'signup')} className="text-slate-400 font-black text-[10px] uppercase tracking-widest hover:text-red-600 transition-colors">{authMode === 'login' ? 'New here? Join the team' : 'Have an account? Login'}</button>
+        <div className="space-y-4">
+          <h2 className="text-2xl font-black text-slate-800 italic tracking-tighter leading-tight uppercase">
+            Sales System Locked
+          </h2>
+          <p className="text-slate-500 font-bold leading-relaxed">
+            Please Contact The System Admin <br/> 
+            <span className="text-red-600 font-black text-lg">( Ahmed Sharaf )</span>
+          </p>
         </div>
+        <div className="pt-6 border-t border-slate-100">
+          <p className="text-slate-400 font-black italic uppercase tracking-[0.2em] text-[10px]">
+            ONE Team One Goal
+          </p>
+        </div>
+        <button 
+          onClick={onLogout}
+          className="w-full flex items-center justify-center gap-2 text-slate-400 hover:text-red-600 font-black text-xs uppercase tracking-widest transition-all pt-4"
+        >
+          <LogOut size={16} /> Logout and Check Later
+        </button>
       </div>
     </div>
   );
 }
 
-// --- Sales Collection Form ---
 function SalesCollectionForm({ areaManagers, shops, user, db, appId, userProfile }) {
   const isAdmin = userProfile?.role === 'admin';
   const assigned = userProfile?.assignedManager || '';
@@ -527,7 +447,6 @@ function SalesCollectionForm({ areaManagers, shops, user, db, appId, userProfile
     try { 
       await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'sales'), { 
         ...formData, 
-        areaManager: isAdmin ? formData.areaManager : assigned, 
         gaAch: Number(formData.gaAch), 
         ocAch: Number(formData.ocAch), 
         workingHours: Number(formData.workingHours), 
@@ -543,157 +462,88 @@ function SalesCollectionForm({ areaManagers, shops, user, db, appId, userProfile
 
   return (
     <div className="max-w-xl mx-auto py-10">
-      <h2 className="text-3xl font-black text-slate-800 mb-8 text-center italic uppercase tracking-tighter">Daily Sales Registry</h2>
+      <h2 className="text-3xl font-black text-slate-800 mb-8 text-center uppercase italic">Daily Sales Entry</h2>
       <form onSubmit={handleSubmit} className="bg-white p-12 rounded-[3.5rem] shadow-2xl space-y-8 border border-slate-50">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="space-y-1">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Shift Date</label>
-            <input required type="date" className="w-full bg-slate-50 p-4 rounded-2xl font-bold border-none outline-none" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} />
-          </div>
-          <div className="space-y-1">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Area Leader</label>
-            <select required disabled={!isAdmin} className="w-full bg-slate-50 p-4 rounded-2xl font-bold outline-none border-none" value={isAdmin ? formData.areaManager : assigned} onChange={e => setFormData({...formData, areaManager: e.target.value, shopName: ''})}>
-              {areaManagers.map(m => <option key={m} value={m}>{m}</option>)}
-            </select>
-          </div>
+          <input required type="date" className="w-full bg-slate-50 p-4 rounded-2xl font-bold outline-none" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} />
+          <select required disabled={!isAdmin} className="w-full bg-slate-50 p-4 rounded-2xl font-bold outline-none" value={isAdmin ? formData.areaManager : assigned} onChange={e => setFormData({...formData, areaManager: e.target.value, shopName: ''})}>
+            {areaManagers.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="space-y-1">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Target Branch</label>
-            <select required className="w-full bg-slate-50 p-4 rounded-2xl font-bold outline-none border-none" value={formData.shopName} onChange={e => setFormData({...formData, shopName: e.target.value})}>
-              <option value="">Select Branch</option>
-              {availableShops.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
-            </select>
-          </div>
-          <div className="space-y-1">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Active Hours</label>
-            <input required type="number" step="0.5" placeholder="e.g. 8" className="w-full bg-slate-50 p-4 rounded-2xl font-bold border-none outline-none" value={formData.workingHours} onChange={e => setFormData({...formData, workingHours: e.target.value})} />
-          </div>
+        <select required className="w-full bg-slate-50 p-4 rounded-2xl font-bold outline-none" value={formData.shopName} onChange={e => setFormData({...formData, shopName: e.target.value})}>
+          <option value="">Select Branch</option>
+          {availableShops.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
+        </select>
+        <div className="grid grid-cols-2 gap-6">
+          <input required type="number" placeholder="GA Ach" className="w-full bg-red-50 p-6 rounded-3xl text-2xl font-black text-red-600 text-center" value={formData.gaAch} onChange={e => setFormData({...formData, gaAch: e.target.value})} />
+          <input required type="number" placeholder="OC Ach" className="w-full bg-blue-50 p-6 rounded-3xl text-2xl font-black text-blue-600 text-center" value={formData.ocAch} onChange={e => setFormData({...formData, ocAch: e.target.value})} />
         </div>
-        <div className="grid grid-cols-2 gap-6 pt-4">
-          <div className="space-y-1 text-center">
-             <label className="text-[10px] font-black text-red-500 uppercase tracking-widest px-1">GA Achieved</label>
-             <input required type="number" placeholder="0" className="w-full bg-red-50 p-6 rounded-3xl text-3xl font-black text-red-600 outline-none border border-red-100 text-center" value={formData.gaAch} onChange={e => setFormData({...formData, gaAch: e.target.value})} />
-          </div>
-          <div className="space-y-1 text-center">
-             <label className="text-[10px] font-black text-blue-500 uppercase tracking-widest px-1">OC Achieved</label>
-             <input required type="number" placeholder="0" className="w-full bg-blue-50 p-6 rounded-3xl text-3xl font-black text-blue-600 outline-none border border-blue-100 text-center" value={formData.ocAch} onChange={e => setFormData({...formData, ocAch: e.target.value})} />
-          </div>
-        </div>
-        <textarea placeholder="Observations or shift notes..." className="w-full bg-slate-50 p-5 rounded-2xl min-h-[100px] outline-none font-bold" value={formData.note} onChange={e => setFormData({...formData, note: e.target.value})} />
-        {success && <div className="p-4 bg-emerald-50 text-emerald-600 rounded-2xl text-[10px] font-black text-center uppercase tracking-widest animate-bounce">Registry Entry Successful</div>}
-        <button type="submit" disabled={submitting} className="w-full bg-slate-900 text-white py-6 rounded-3xl font-black text-[10px] uppercase tracking-[0.3em] shadow-xl">Commit Entry</button>
+        <button type="submit" disabled={submitting} className="w-full bg-slate-900 text-white py-6 rounded-3xl font-black uppercase shadow-xl tracking-[0.2em]">{submitting ? 'Processing...' : 'Submit Entry'}</button>
+        {success && <p className="text-emerald-600 font-bold text-center animate-bounce">Saved Successfully!</p>}
       </form>
     </div>
   );
 }
 
-// --- Navigation Helpers ---
-function Navigation({ view, setView, role, onLogout }) {
-  const links = [
-    { id: 'dashboard', label: 'Dashboard', icon: BarChart3, roles: ['admin', 'user'] },
-    { id: 'archive', label: 'Archive', icon: Archive, roles: ['admin', 'user'] },
-    { id: 'collection', label: 'Log Sales', icon: PlusCircle, roles: ['admin', 'user'] },
-    { id: 'reports', label: 'Audit Trail', icon: ClipboardList, roles: ['admin', 'user'] },
-    { id: 'targets', label: 'Goal Setting', icon: Target, roles: ['admin'] },
-    { id: 'userSearch', label: 'Team Manager', icon: UsersIcon, roles: ['admin'] },
-    { id: 'admin', label: 'Configuration', icon: Settings, roles: ['admin'] }
-  ];
+function LoginPortal({ onSignIn }) {
+  const [authMode, setAuthMode] = useState('login');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleAuth = async (e) => {
+    e.preventDefault(); setError(''); setLoading(true);
+    try { 
+      if (authMode === 'signup') await createUserWithEmailAndPassword(auth, email, password);
+      else await signInWithEmailAndPassword(auth, email, password);
+      onSignIn();
+    } catch (err) { 
+      setError(err.message.replace('Firebase:', '').replace('Error (auth/', '').replace(').', '')); 
+    } finally { setLoading(false); }
+  };
+
   return (
-    <nav className="hidden md:flex flex-col fixed left-0 top-0 bottom-0 w-64 bg-[#0F172A] text-slate-300 p-6 z-40 border-r border-white/5">
-      <div className="mb-10 px-2 flex items-center gap-3">
-        <Store className="text-red-600" size={24} />
-        <h1 className="text-xl font-black text-white italic tracking-tighter">CASH SHOP</h1>
-      </div>
-      <div className="space-y-1 flex-1">
-        {links.map(link => link.roles.includes(role) && (
-          <button key={link.id} onClick={() => setView(link.id)} className={`w-full flex items-center gap-3 px-4 py-4 rounded-2xl transition-all ${view === link.id ? 'bg-red-600 text-white shadow-lg shadow-red-900/20' : 'hover:bg-slate-800 text-slate-400'}`}>
-            <link.icon size={18} />
-            <span className="font-black text-[10px] uppercase tracking-widest">{link.label}</span>
+    <div className="min-h-screen flex items-center justify-center bg-[#0F172A] p-4 text-center">
+      <div className="w-full max-sm bg-white rounded-[3.5rem] p-12 shadow-2xl space-y-8 animate-in zoom-in duration-500">
+        <div className="space-y-2">
+          <ShieldCheck className="text-red-600 mx-auto" size={56} />
+          <h1 className="text-3xl font-black text-slate-800 italic uppercase">Log In</h1>
+        </div>
+        <form onSubmit={handleAuth} className="space-y-4">
+          <input required type="email" placeholder="Email" className="w-full bg-slate-50 p-5 rounded-2xl font-bold border-none outline-none text-center" value={email} onChange={e => setEmail(e.target.value)} />
+          <input required type="password" placeholder="Password" className="w-full bg-slate-50 p-5 rounded-2xl font-bold border-none outline-none text-center" value={password} onChange={e => setPassword(e.target.value)} />
+          {error && <div className="p-4 bg-red-50 text-red-500 rounded-2xl text-[10px] font-black uppercase">{error}</div>}
+          <button disabled={loading} className="w-full bg-slate-900 text-white py-5 rounded-3xl font-black text-[10px] uppercase shadow-xl">
+            {loading ? <Loader2 className="animate-spin mx-auto" size={24} /> : (authMode === 'signup' ? 'Create Account' : 'Authenticate')}
           </button>
-        ))}
-      </div>
-      <button onClick={onLogout} className="mt-auto flex items-center gap-3 px-4 py-4 text-red-400 font-black text-[10px] uppercase tracking-widest transition-all">
-        <LogOut size={18} /> Exit System
-      </button>
-    </nav>
-  );
-}
-
-function MobileNav({ view, setView, role }) {
-  const icons = [
-    {id:'dashboard', icon:BarChart3, roles:['admin','user']},
-    {id:'archive', icon:Archive, roles:['admin','user']},
-    {id:'collection', icon:PlusCircle, roles:['admin','user']},
-    {id:'reports', icon:ClipboardList, roles:['admin','user']},
-  ];
-  return (
-    <div className="fixed bottom-0 left-0 right-0 bg-white border-t flex justify-around p-3 md:hidden z-50 rounded-t-3xl shadow-2xl">
-      {icons.map(item => item.roles.includes(role) && (
-        <button key={item.id} onClick={() => setView(item.id)} className={`p-3 rounded-2xl transition-all ${view === item.id ? 'text-red-600 bg-red-50' : 'text-slate-400'}`}>
-          <item.icon size={22} />
+        </form>
+        <button onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')} className="text-slate-400 font-black text-[10px] uppercase underline">
+          {authMode === 'login' ? 'New here? Register' : 'Back to Login'}
         </button>
-      ))}
+      </div>
     </div>
   );
 }
 
-function LoadingScreen() {
-  return (
-    <div className="flex h-screen flex-col items-center justify-center bg-slate-50 space-y-4">
-      <div className="relative">
-        <Loader2 className="w-12 h-12 animate-spin text-red-600 mx-auto" />
-        <Store className="absolute inset-0 m-auto text-red-100" size={16} />
-      </div>
-      <p className="text-slate-500 font-black text-[10px] uppercase tracking-[0.3em] animate-pulse">Establishing Connection...</p>
-    </div>
-  );
-}
-
-function WaitingRoom({ onLogout }) { 
-  return (
-    <div className="h-screen flex flex-col items-center justify-center bg-[#0F172A] text-white p-12 text-center space-y-6">
-      <div className="p-6 bg-red-500/10 rounded-full border border-red-500/20 text-red-500">
-        <ShieldCheck size={48} />
-      </div>
-      <h2 className="text-3xl font-black italic uppercase tracking-tighter">Awaiting Activation</h2>
-      <p className="text-slate-400 text-sm font-bold uppercase tracking-widest">Admin approval required for account activation.</p>
-      <button onClick={onLogout} className="text-red-500 underline text-xs uppercase font-black tracking-widest">Logout</button>
-    </div>
-  ); 
-}
-
-// Remaining Admin/Manager components follow the same pattern...
-function SalesList({ records, targets, shops, managers, role, db, appId, userProfile }) {
-  const isAdmin = userProfile?.role === 'admin';
-  const [filterShop, setFilterShop] = useState('All');
-  const filtered = useMemo(() => filterShop === 'All' ? records : records.filter(r => r.shopName === filterShop), [records, filterShop]);
+function SalesList({ records, role, db, appId }) {
+  const isAdmin = role === 'admin';
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className="text-3xl font-black text-slate-800 italic uppercase">Audit Trail</h2>
-        <select value={filterShop} onChange={e => setFilterShop(e.target.value)} className="p-3 bg-white border border-slate-100 rounded-xl font-black text-[10px] uppercase outline-none shadow-sm">
-           <option value="All">All Branches</option>
-           {shops.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
-        </select>
-      </div>
+      <h2 className="text-3xl font-black text-slate-800 italic uppercase">Audit Trail</h2>
       <div className="bg-white rounded-[2.5rem] shadow-xl border border-slate-100 overflow-hidden overflow-x-auto">
         <table className="w-full text-left">
           <thead className="bg-[#0F172A] text-slate-400 text-[10px] font-black uppercase tracking-widest">
-            <tr>
-              <th className="px-8 py-6">Timestamp</th><th className="px-8 py-6">Date</th><th className="px-8 py-6">Manager</th><th className="px-8 py-6">Shop</th><th className="px-8 py-6 text-center">GA</th><th className="px-8 py-6 text-center">OC</th>{isAdmin && <th className="px-8 py-6 text-right">Del</th>}
-            </tr>
+            <tr><th className="px-8 py-6">Date</th><th className="px-8 py-6">Branch</th><th className="px-8 py-6 text-center">GA</th><th className="px-8 py-6 text-center">OC</th>{isAdmin && <th className="px-8 py-6 text-right">Action</th>}</tr>
           </thead>
           <tbody className="divide-y divide-slate-50 font-bold">
-            {filtered.map(r => (
-              <tr key={r.id} className="hover:bg-slate-50 transition-colors">
-                <td className="px-8 py-5 text-slate-400 text-xs">{new Date(r.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
-                <td className="px-8 py-5 text-slate-700 text-sm">{r.date}</td>
-                <td className="px-8 py-5 text-slate-800 text-sm font-black">{r.areaManager}</td>
-                <td className="px-8 py-5 text-slate-500 italic text-sm">{r.shopName}</td>
+            {records.map(r => (
+              <tr key={r.id}>
+                <td className="px-8 py-5 text-slate-400 text-xs">{r.date}</td>
+                <td className="px-8 py-5 text-slate-700">{r.shopName}</td>
                 <td className="px-8 py-5 text-center text-red-600">+{r.gaAch}</td>
                 <td className="px-8 py-5 text-center text-blue-600">+{r.ocAch}</td>
-                {isAdmin && <td className="px-8 py-5 text-right"><button onClick={async () => { if(window.confirm("Confirm deletion?")) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sales', r.id)); }} className="text-slate-200 hover:text-red-500"><Trash2 size={16}/></button></td>}
+                {isAdmin && <td className="px-8 py-5 text-right"><button onClick={async () => await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sales', r.id))} className="text-red-200 hover:text-red-500"><Trash2 size={16}/></button></td>}
               </tr>
             ))}
           </tbody>
@@ -703,31 +553,28 @@ function SalesList({ records, targets, shops, managers, role, db, appId, userPro
   );
 }
 
-function TargetSetting({ shops, areaManagers, targets, db, appId }) {
+function TargetSetting({ shops, targets, db, appId }) {
   const [editingShop, setEditingShop] = useState(null);
   const [editForm, setEditForm] = useState({ ga: 0, oc: 0 });
   return (
     <div className="space-y-6">
-      <h2 className="text-3xl font-black uppercase italic">Monthly Targets</h2>
-      <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden overflow-x-auto">
+      <h2 className="text-3xl font-black uppercase italic">Monthly Goals</h2>
+      <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
         <table className="w-full text-left">
-          <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 tracking-widest">
-            <tr><th className="px-8 py-5">Shop</th><th className="px-4 py-5 text-center">GA Goal</th><th className="px-4 py-5 text-center">OC Goal</th><th className="px-8 py-5 text-right">Edit</th></tr>
+          <thead className="bg-slate-50 text-[10px] font-black uppercase text-slate-400 px-8">
+            <tr><th className="px-8 py-5">Shop</th><th className="px-4 py-5 text-center">GA Goal</th><th className="px-8 py-5 text-right">Edit</th></tr>
           </thead>
           <tbody className="divide-y divide-slate-50">
             {shops.map(shop => (
-              <tr key={shop.name} className="hover:bg-slate-50">
-                <td className="px-8 py-5 font-black text-slate-800 italic">{shop.name}</td>
+              <tr key={shop.name}>
+                <td className="px-8 py-5 font-black text-slate-800">{shop.name}</td>
                 <td className="px-4 py-5 text-center font-black">
-                  {editingShop === shop.name ? <input type="number" className="w-24 bg-slate-50 p-2 text-center rounded-lg outline-none" value={editForm.ga} onChange={e => setEditForm({...editForm, ga: e.target.value})} /> : (targets[shop.name]?.ga || 0)}
-                </td>
-                <td className="px-4 py-5 text-center font-black">
-                  {editingShop === shop.name ? <input type="number" className="w-24 bg-slate-50 p-2 text-center rounded-lg outline-none" value={editForm.oc} onChange={e => setEditForm({...editForm, oc: e.target.value})} /> : (targets[shop.name]?.oc || 0)}
+                  {editingShop === shop.name ? <input type="number" className="w-24 bg-slate-50 p-2 text-center" value={editForm.ga} onChange={e => setEditForm({...editForm, ga: e.target.value})} /> : (targets[shop.name]?.ga || 0)}
                 </td>
                 <td className="px-8 py-5 text-right">
                   {editingShop === shop.name ? 
-                    <button onClick={async () => { await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config'), { targets: { ...targets, [shop.name]: { ga: Number(editForm.ga), oc: Number(editForm.oc) } } }, { merge: true }); setEditingShop(null); }} className="p-2 bg-emerald-50 text-emerald-500 rounded-lg"><Check size={18}/></button> : 
-                    <button onClick={() => { setEditingShop(shop.name); setEditForm({ ga: targets[shop.name]?.ga || 0, oc: targets[shop.name]?.oc || 0 }); }} className="text-slate-200 hover:text-red-500"><Edit3 size={18} /></button>
+                    <button onClick={async () => { await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config'), { targets: { ...targets, [shop.name]: { ga: Number(editForm.ga), oc: Number(editForm.oc) } } }, { merge: true }); setEditingShop(null); }} className="text-emerald-500 font-bold">Save</button> : 
+                    <button onClick={() => { setEditingShop(shop.name); setEditForm({ ga: targets[shop.name]?.ga || 0, oc: targets[shop.name]?.oc || 0 }); }} className="text-slate-300 hover:text-red-500">Edit</button>
                   }
                 </td>
               </tr>
@@ -744,29 +591,19 @@ function UserSearch({ users, db, appId, managers }) {
   const [editForm, setEditForm] = useState({ username: '', role: 'user', assignedManager: '' });
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-black uppercase italic">Team Approvals</h2>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <h2 className="text-2xl font-black uppercase italic">Team Roster</h2>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {users.map(u => (
-          <div key={u.uid} className="bg-white p-8 rounded-[2rem] shadow-sm border border-slate-100 space-y-4">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center font-black text-slate-300 uppercase shadow-inner">{u.username?.charAt(0)}</div>
-              <div className="flex-1">
-                <p className="font-black text-slate-800">{u.username}</p>
-                <span className="text-[10px] font-black uppercase tracking-widest text-red-600">{u.assignedManager || 'Pending Assignment'}</span>
-              </div>
-            </div>
+          <div key={u.uid} className="bg-white p-8 rounded-[2rem] shadow-sm border border-slate-100">
+            <p className="font-black text-slate-800 text-lg">{u.username}</p>
+            <p className="text-[10px] text-red-600 font-black uppercase">{u.assignedManager || 'No Assignment'}</p>
             {editingId === u.uid ? (
-              <div className="space-y-2">
-                <select className="w-full bg-slate-50 p-3 rounded-xl text-xs font-bold" value={editForm.role} onChange={e => setEditForm({...editForm, role: e.target.value})}>
-                  <option value="user">USER</option><option value="admin">ADMIN</option>
-                </select>
-                <select className="w-full bg-slate-50 p-3 rounded-xl text-xs font-bold" value={editForm.assignedManager} onChange={e => setEditForm({...editForm, assignedManager: e.target.value})}>
-                  <option value="">No Region</option>{managers.map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
-                <button onClick={async () => { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.uid), editForm); setEditingId(null); }} className="w-full bg-slate-900 text-white p-3 rounded-xl font-black uppercase tracking-widest">Update</button>
+              <div className="mt-4 space-y-2">
+                <select className="w-full bg-slate-50 p-3 rounded-xl text-xs font-bold" value={editForm.assignedManager} onChange={e => setEditForm({...editForm, assignedManager: e.target.value})}><option value="">Assign Leader</option>{managers.map(m => <option key={m} value={m}>{m}</option>)}</select>
+                <button onClick={async () => { await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.uid), editForm); setEditingId(null); }} className="w-full bg-slate-900 text-white p-3 rounded-xl font-black uppercase">Approve</button>
               </div>
             ) : ( 
-              <button onClick={() => { setEditingId(u.uid); setEditForm({ username: u.username, role: u.role, assignedManager: u.assignedManager || '' }); }} className="w-full bg-slate-50 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-400">Modify Permissions</button> 
+              <button onClick={() => { setEditingId(u.uid); setEditForm({ username: u.username, role: u.role, assignedManager: u.assignedManager || '' }); }} className="mt-4 w-full bg-slate-50 py-3 rounded-xl text-xs font-black uppercase tracking-widest">Settings</button> 
             )}
           </div>
         ))}
@@ -779,24 +616,20 @@ function AdminDashboard({ areaManagers, shops, db, appId }) {
   const [newM, setNewM] = useState(''); const [newS, setNewS] = useState(''); const [assignedM, setAssignedM] = useState('');
   const update = async (m, s) => { await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config'), { areaManagers: m || areaManagers, shops: s || shops }, { merge: true }); };
   return (
-    <div className="space-y-10">
-      <h2 className="text-3xl font-black italic uppercase">System Setup</h2>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        <div className="bg-white p-10 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-col gap-4">
-          <h3 className="font-black text-red-600 uppercase text-[10px] tracking-widest flex items-center gap-2">Add Manager <UserPlus size={16} /></h3>
-          <div className="flex gap-2">
-            <input value={newM} onChange={e => setNewM(e.target.value)} className="flex-1 bg-slate-50 p-4 rounded-xl font-bold" placeholder="Manager Name" />
-            <button onClick={() => { update([...areaManagers, newM], null); setNewM(''); }} className="bg-red-600 text-white px-6 rounded-xl font-black shadow-lg shadow-red-50">ADD</button>
-          </div>
+    <div className="space-y-8">
+      <h2 className="text-3xl font-black italic uppercase">Branch Manager</h2>
+      <div className="bg-white p-10 rounded-[2.5rem] shadow-sm border border-slate-100 space-y-4">
+        <p className="font-black text-red-600 text-[10px] uppercase">Add Area Manager</p>
+        <div className="flex gap-2">
+          <input value={newM} onChange={e => setNewM(e.target.value)} className="flex-1 bg-slate-50 p-4 rounded-xl" placeholder="Name" />
+          <button onClick={() => { update([...areaManagers, newM], null); setNewM(''); }} className="bg-red-600 text-white px-6 rounded-xl font-black">ADD</button>
         </div>
-        <div className="bg-white p-10 rounded-[2.5rem] shadow-sm border border-slate-100 flex flex-col gap-4">
-          <h3 className="font-black text-red-600 uppercase text-[10px] tracking-widest flex items-center gap-2">Add Branch <Store size={16} /></h3>
-          <input value={newS} onChange={e => setNewS(e.target.value)} className="bg-slate-50 p-4 rounded-xl font-bold" placeholder="Branch Name" />
-          <select value={assignedM} onChange={e => setAssignedM(e.target.value)} className="bg-slate-50 p-4 rounded-xl font-bold">
-            <option value="">Responsible Manager</option>{areaManagers.map(m => <option key={m} value={m}>{m}</option>)}
-          </select>
-          <button onClick={() => { if(newS && assignedM) update(null, [...shops, {name: newS, manager: assignedM}]); setNewS(''); }} className="bg-slate-900 text-white p-4 rounded-xl font-black text-[10px] tracking-widest uppercase">Deploy Branch</button>
-        </div>
+      </div>
+      <div className="bg-white p-10 rounded-[2.5rem] shadow-sm border border-slate-100 space-y-4">
+        <p className="font-black text-red-600 text-[10px] uppercase">Link Branch</p>
+        <input value={newS} onChange={e => setNewS(e.target.value)} className="bg-slate-50 p-4 rounded-xl" placeholder="Branch Name" />
+        <select value={assignedM} onChange={e => setAssignedM(e.target.value)} className="bg-slate-50 p-4 rounded-xl font-bold">{areaManagers.map(m => <option key={m} value={m}>{m}</option>)}</select>
+        <button onClick={() => { if(newS && assignedM) update(null, [...shops, {name: newS, manager: assignedM}]); setNewS(''); }} className="w-full bg-slate-900 text-white p-4 rounded-xl font-black uppercase">Save</button>
       </div>
     </div>
   );
@@ -814,15 +647,64 @@ function Onboarding({ user, setView, setUserProfile }) {
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC] p-4 text-center">
       <div className="w-full max-w-sm bg-white rounded-[3rem] p-10 shadow-2xl space-y-8">
-        <h2 className="text-2xl font-black text-slate-800 italic">Account Setup</h2>
-        <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Your Full Name" className="w-full bg-slate-50 p-5 rounded-2xl font-black text-center text-lg outline-none" />
-        <button onClick={handleSave} className="w-full bg-red-600 text-white py-5 rounded-3xl font-black uppercase tracking-widest shadow-xl shadow-red-100 active:scale-95 transition-all">Setup Identity</button>
+        <h2 className="text-2xl font-black text-slate-800 italic uppercase">Setup Account</h2>
+        <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Full Name" className="w-full bg-slate-50 p-5 rounded-2xl font-black text-center outline-none" />
+        <button onClick={handleSave} className="w-full bg-red-600 text-white py-5 rounded-3xl font-black uppercase shadow-xl">Complete</button>
       </div>
     </div>
   );
 }
 
-// Global Styles
+function Navigation({ view, setView, role, onLogout }) {
+  const links = [
+    { id: 'dashboard', label: 'Home', icon: BarChart3, roles: ['admin', 'user'] },
+    { id: 'archive', label: 'Archive', icon: Archive, roles: ['admin', 'user'] },
+    { id: 'collection', label: 'Registry', icon: PlusCircle, roles: ['admin', 'user'] },
+    { id: 'reports', label: 'History', icon: ClipboardList, roles: ['admin', 'user'] },
+    { id: 'targets', label: 'Targets', icon: Target, roles: ['admin'] },
+    { id: 'userSearch', label: 'Team', icon: UsersIcon, roles: ['admin'] },
+    { id: 'admin', label: 'Config', icon: Settings, roles: ['admin'] }
+  ];
+  return (
+    <nav className="hidden md:flex flex-col fixed left-0 top-0 bottom-0 w-64 bg-[#0F172A] text-slate-300 p-6 z-40 border-r border-white/5">
+      <div className="mb-10 px-2 flex items-center gap-3"><Store className="text-red-600" size={24} /><h1 className="text-xl font-black text-white italic tracking-tighter uppercase">Cash Shop</h1></div>
+      <div className="space-y-1 flex-1">
+        {links.map(link => link.roles.includes(role) && (
+          <button key={link.id} onClick={() => setView(link.id)} className={`w-full flex items-center gap-3 px-4 py-4 rounded-2xl transition-all ${view === link.id ? 'bg-red-600 text-white shadow-lg shadow-red-900/20' : 'hover:bg-slate-800 text-slate-400'}`}>
+            <link.icon size={18} /><span className="font-black text-[10px] uppercase tracking-widest">{link.label}</span>
+          </button>
+        ))}
+      </div>
+      <button onClick={onLogout} className="mt-auto flex items-center gap-3 px-4 py-4 text-red-400 font-black text-[10px] uppercase tracking-widest hover:text-red-300"><LogOut size={18} /> Logout</button>
+    </nav>
+  );
+}
+
+function MobileNav({ view, setView, role }) {
+  const icons = [
+    {id:'dashboard', icon:BarChart3, roles:['admin','user']},
+    {id:'archive', icon:Archive, roles:['admin','user']},
+    {id:'collection', icon:PlusCircle, roles:['admin','user']},
+    {id:'reports', icon:ClipboardList, roles:['admin','user']},
+  ];
+  return (
+    <div className="fixed bottom-0 left-0 right-0 bg-white border-t flex justify-around p-3 md:hidden z-50 rounded-t-3xl shadow-2xl">
+      {icons.map(item => item.roles.includes(role) && (
+        <button key={item.id} onClick={() => setView(item.id)} className={`p-3 rounded-2xl ${view === item.id ? 'text-red-600 bg-red-50' : 'text-slate-400'}`}><item.icon size={22} /></button>
+      ))}
+    </div>
+  );
+}
+
+function LoadingScreen() {
+  return (
+    <div className="flex h-screen flex-col items-center justify-center bg-slate-50 space-y-4">
+      <Loader2 className="w-12 h-12 animate-spin text-red-600 mx-auto" />
+      <p className="text-slate-500 font-black text-[10px] uppercase tracking-[0.3em] animate-pulse">Syncing Cloud Database...</p>
+    </div>
+  );
+}
+
 if (typeof document !== 'undefined') {
   const styleTag = document.createElement('style');
   styleTag.innerHTML = `
