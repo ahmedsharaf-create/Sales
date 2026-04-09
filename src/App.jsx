@@ -78,6 +78,14 @@ const firebaseConfig = {
 
 const appId = 'pyramids-sales-v1';
 
+// Helpers
+const getCurrentMonth = () => new Date().toISOString().slice(0, 7); // "YYYY-MM"
+const formatMonthName = (monthStr) => {
+  if (!monthStr) return "";
+  const [year, month] = monthStr.split('-');
+  return new Date(year, month - 1).toLocaleString('default', { month: 'long', year: 'numeric' });
+};
+
 // Firebase initialization logic
 let app;
 if (!getApps().length) {
@@ -335,6 +343,8 @@ function WaitingRoom({ onLogout }) {
 function Dashboard({ records, targets, shops, managers, userProfile }) {
   const isAdmin = userProfile?.role === 'admin';
   const assignedManager = userProfile?.assignedManager || '';
+  const currentMonth = getCurrentMonth();
+  
   const [filterManager, setFilterManager] = useState(isAdmin ? 'All' : assignedManager);
   const [selectedManager, setSelectedManager] = useState(null);
   const [tableSearch, setTableSearch] = useState('');
@@ -343,14 +353,19 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
 
   const isSingleManagerView = isAdmin && filterManager !== 'All';
 
+  // Home page only shows CURRENT MONTH sales
+  const currentMonthRecords = useMemo(() => {
+    return records.filter(r => r.date.startsWith(currentMonth));
+  }, [records, currentMonth]);
+
   const filteredRecords = useMemo(() => {
-    let data = [...records];
+    let data = [...currentMonthRecords];
     const managerToFilter = isAdmin ? filterManager : assignedManager;
     if (managerToFilter && managerToFilter !== 'All') {
       data = data.filter(r => r.areaManager === managerToFilter);
     }
     return data;
-  }, [records, filterManager, isAdmin, assignedManager]);
+  }, [currentMonthRecords, filterManager, isAdmin, assignedManager]);
 
   const managerSummary = useMemo(() => {
     const summary = {};
@@ -404,14 +419,15 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
     const relevantShops = isSingleManagerView
       ? shops.filter(s => s.manager === filterManager)
       : (isAdmin ? shops : shops.filter(s => s.manager === assignedManager));
-    const activeShopNamesSet = new Set(records.filter(r => r.date === today).map(r => r.shopName));
+    
+    const activeShopNamesSet = new Set(currentMonthRecords.filter(r => r.date === today).map(r => r.shopName));
     const totalGA = filteredRecords.reduce((acc, r) => acc + (r.gaAch || 0), 0);
     const totalOC = filteredRecords.reduce((acc, r) => acc + (r.ocAch || 0), 0);
     const closedShopsList = relevantShops.filter(s => !activeShopNamesSet.has(s.name));
     const totalTargetGA = relevantShops.reduce((acc, s) => acc + (targets[s.name]?.ga || 0), 0);
     const totalTargetOC = relevantShops.reduce((acc, s) => acc + (targets[s.name]?.oc || 0), 0);
     return { totalGA, totalOC, totalTargetGA, totalTargetOC, closedShopsToday: closedShopsList.length, closedShopsList };
-  }, [records, shops, targets, filteredRecords, isAdmin, assignedManager, filterManager, isSingleManagerView]);
+  }, [currentMonthRecords, shops, targets, filteredRecords, isAdmin, assignedManager, filterManager, isSingleManagerView]);
 
   const getShopDetails = (managerName) => {
     return shops.filter(s => s.manager === managerName).map(s => {
@@ -436,8 +452,15 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
         <div className="flex items-center gap-3">
           <div className="p-3 bg-red-600 rounded-2xl shadow-lg shadow-red-200"><LayoutDashboard className="text-white" size={24} /></div>
           <div>
-            <h2 className="text-2xl font-black text-slate-800 tracking-tight italic">{isAdmin ? "Performance Hub" : "Your Performance"}</h2>
-            {isSingleManagerView && <p className="text-xs font-black uppercase text-red-500 tracking-widest mt-0.5">{filterManager}</p>}
+            <h2 className="text-2xl font-black text-slate-800 tracking-tight italic">
+              {isAdmin ? "Performance Hub" : "Your Performance"}
+            </h2>
+            <div className="flex items-center gap-2 mt-1">
+              <span className="px-2 py-0.5 bg-red-50 text-red-600 text-[10px] font-black rounded-full uppercase tracking-widest">
+                {formatMonthName(currentMonth)}
+              </span>
+              {isSingleManagerView && <p className="text-xs font-black uppercase text-slate-400 tracking-widest">{filterManager}</p>}
+            </div>
           </div>
         </div>
         {isAdmin && (
@@ -474,7 +497,7 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
         </div>
         <div className="space-y-4">
           <div className="bg-red-600 p-6 rounded-3xl text-white shadow-xl shadow-red-100">
-            <p className="text-xs font-black uppercase text-red-100 mb-1">GA Achievement</p>
+            <p className="text-xs font-black uppercase text-red-100 mb-1">Monthly GA Achievement</p>
             <h4 className="text-3xl font-black italic">{operationalStats.totalGA.toLocaleString()}</h4>
             <div className="mt-2 h-1.5 bg-red-500 rounded-full overflow-hidden">
               <div className="h-full bg-white transition-all" style={{ width: operationalStats.totalTargetGA > 0 ? Math.min(100, (operationalStats.totalGA / operationalStats.totalTargetGA * 100)) + '%' : '0%' }} />
@@ -482,7 +505,7 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
             <p className="text-[10px] font-black uppercase text-red-200 mt-2">Target: {operationalStats.totalTargetGA.toLocaleString()}</p>
           </div>
           <div className="bg-blue-600 p-6 rounded-3xl text-white shadow-xl shadow-blue-100">
-            <p className="text-xs font-black uppercase text-blue-100 mb-1">OC Achievement</p>
+            <p className="text-xs font-black uppercase text-blue-100 mb-1">Monthly OC Achievement</p>
             <h4 className="text-3xl font-black italic">{operationalStats.totalOC.toLocaleString()}</h4>
             <div className="mt-2 h-1.5 bg-blue-500 rounded-full overflow-hidden">
               <div className="h-full bg-white transition-all" style={{ width: operationalStats.totalTargetOC > 0 ? Math.min(100, (operationalStats.totalOC / operationalStats.totalTargetOC * 100)) + '%' : '0%' }} />
@@ -498,8 +521,8 @@ function Dashboard({ records, targets, shops, managers, userProfile }) {
       </div>
 
       <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
-        <div className="p-8 border-b border-slate-50">
-           <h3 className="font-black text-slate-800 text-lg tracking-tight">Breakdown</h3>
+        <div className="p-8 border-b border-slate-50 flex justify-between items-center">
+           <h3 className="font-black text-slate-800 text-lg tracking-tight">Breakdown — {formatMonthName(currentMonth)}</h3>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left">
@@ -752,12 +775,33 @@ function SalesCollectionForm({ areaManagers, shops, user, db, appId, userProfile
   );
 }
 
-function SalesList({ records, targets, role, db, appId }) {
+function SalesList({ records, targets, userProfile, db, appId }) {
+  const [selectedMonth, setSelectedMonth] = useState(getCurrentMonth());
+  
+  const filtered = useMemo(() => {
+    return records.filter(r => r.date.startsWith(selectedMonth));
+  }, [records, selectedMonth]);
+
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-black italic uppercase">Sales History</h2>
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div>
+          <h2 className="text-2xl font-black italic uppercase">Archive & History</h2>
+          <p className="text-xs font-black uppercase text-slate-400 tracking-widest mt-1">
+            Viewing records for {formatMonthName(selectedMonth)}
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="text-[10px] font-black uppercase text-slate-400">Jump to Month:</span>
+          <input 
+            type="month" 
+            className="bg-white border-none p-3 rounded-xl text-xs font-black shadow-sm outline-none cursor-pointer" 
+            value={selectedMonth} 
+            onChange={e => setSelectedMonth(e.target.value)}
+          />
+        </div>
       </div>
+
       <div className="bg-white rounded-3xl shadow-xl overflow-hidden border border-slate-100 overflow-x-auto">
         <table className="w-full text-left">
           <thead className="bg-[#0F172A] text-slate-400 text-[10px] font-black uppercase tracking-widest">
@@ -767,18 +811,24 @@ function SalesList({ records, targets, role, db, appId }) {
               <th className="px-6 py-4 text-center">GA</th>
               <th className="px-6 py-4 text-center">OC</th>
               <th className="px-6 py-4 text-center">Hours</th>
-              {role === 'admin' && <th className="px-6 py-4 text-right">Action</th>}
+              {userProfile?.role === 'admin' && <th className="px-6 py-4 text-right">Action</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-50">
-            {records.map(r => (
+            {filtered.length === 0 ? (
+              <tr>
+                <td colSpan={userProfile?.role === 'admin' ? 6 : 5} className="px-6 py-10 text-center text-slate-300 italic">
+                  No records found for this month.
+                </td>
+              </tr>
+            ) : filtered.map(r => (
               <tr key={r.id} className="hover:bg-slate-50 transition-colors">
                 <td className="px-6 py-4 font-bold text-slate-500 text-xs">{r.date}</td>
                 <td className="px-6 py-4 font-black text-slate-800">{r.shopName}</td>
                 <td className="px-6 py-4 text-center font-bold text-red-600">+{r.gaAch}</td>
                 <td className="px-6 py-4 text-center font-bold text-blue-600">+{r.ocAch}</td>
                 <td className="px-6 py-4 text-center font-bold text-slate-400">{r.workingHours}h</td>
-                {role === 'admin' && (
+                {userProfile?.role === 'admin' && (
                   <td className="px-6 py-4 text-right">
                     <button onClick={async () => { if(confirm("Delete?")) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sales', r.id)); }} className="text-slate-200 hover:text-red-500"><Trash2 size={16}/></button>
                   </td>
