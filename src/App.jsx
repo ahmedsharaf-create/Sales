@@ -291,7 +291,7 @@ function ArchivePage({ archiveRecords, availableMonths, targets, shops, managers
   const [selectedMonth, setSelectedMonth] = useState(availableMonths[0] || '');
   const [filterManager, setFilterManager] = useState(isAdmin ? 'All' : assignedManager);
   const [filterShop, setFilterShop] = useState('All');
-  const [activeTab, setActiveTab] = useState('summary'); // 'summary' | 'records'
+  const [activeTab, setActiveTab] = useState('summary'); // 'summary' | 'shops' | 'records'
 
   const monthRecords = useMemo(() => {
     let data = archiveRecords.filter(r => getYearMonth(r) === selectedMonth);
@@ -343,6 +343,35 @@ function ArchivePage({ archiveRecords, availableMonths, targets, shops, managers
       completionOC: m.targetOC > 0 ? ((m.totalOC / m.targetOC) * 100).toFixed(1) : 0
     }));
   }, [filteredRecords, managers, shops, targets, isAdmin, assignedManager, filterManager]);
+
+  // Build shop-level summary for the selected month
+  const shopSummary = useMemo(() => {
+    const relevantShops = isAdmin
+      ? (filterManager === 'All' ? shops : shops.filter(s => s.manager === filterManager))
+      : shops.filter(s => s.manager === assignedManager);
+
+    return relevantShops.map(s => {
+      const shopRecords = filteredRecords.filter(r => r.shopName === s.name);
+      const totalGA = shopRecords.reduce((acc, r) => acc + (r.gaAch || 0), 0);
+      const totalOC = shopRecords.reduce((acc, r) => acc + (r.ocAch || 0), 0);
+      const totalHours = shopRecords.reduce((acc, r) => acc + parseFloat(r.workingHours || 0), 0);
+      const targetGA = targets[s.name]?.ga || 0;
+      const targetOC = targets[s.name]?.oc || 0;
+      return {
+        name: s.name,
+        manager: s.manager,
+        targetGA,
+        totalGA,
+        completionGA: targetGA > 0 ? ((totalGA / targetGA) * 100).toFixed(1) : '0',
+        remainingGA: Math.max(0, targetGA - totalGA),
+        targetOC,
+        totalOC,
+        completionOC: targetOC > 0 ? ((totalOC / targetOC) * 100).toFixed(1) : '0',
+        entryCount: shopRecords.length,
+        avgHours: shopRecords.length > 0 ? (totalHours / shopRecords.length).toFixed(1) : '0',
+      };
+    });
+  }, [filteredRecords, shops, targets, isAdmin, filterManager, assignedManager]);
 
   const totals = useMemo(() => ({
     totalGA: filteredRecords.reduce((acc, r) => acc + (r.gaAch || 0), 0),
@@ -499,7 +528,7 @@ function ArchivePage({ archiveRecords, availableMonths, targets, shops, managers
           {/* Tabs */}
           {selectedMonth && (
             <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
-              <div className="flex border-b border-slate-100 px-6 pt-6 gap-1">
+              <div className="flex border-b border-slate-100 px-6 pt-6 gap-1 flex-wrap">
                 <button
                   onClick={() => setActiveTab('summary')}
                   className={`px-5 py-3 rounded-t-2xl font-black text-xs uppercase tracking-widest transition-all ${
@@ -509,6 +538,16 @@ function ArchivePage({ archiveRecords, availableMonths, targets, shops, managers
                   }`}
                 >
                   Manager Summary
+                </button>
+                <button
+                  onClick={() => setActiveTab('shops')}
+                  className={`px-5 py-3 rounded-t-2xl font-black text-xs uppercase tracking-widest transition-all ${
+                    activeTab === 'shops'
+                      ? 'bg-slate-900 text-white'
+                      : 'text-slate-400 hover:text-slate-600'
+                  }`}
+                >
+                  Shops Summary
                 </button>
                 <button
                   onClick={() => setActiveTab('records')}
@@ -560,6 +599,84 @@ function ArchivePage({ archiveRecords, availableMonths, targets, shops, managers
                           </tr>
                         );
                       })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {activeTab === 'shops' && (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead className="bg-slate-50 text-xs font-black uppercase text-slate-400 tracking-widest">
+                      <tr>
+                        <th className="px-8 py-5">Shop Name</th>
+                        <th className="px-6 py-5">Area Manager</th>
+                        <th className="px-4 py-5 text-center">GA Target</th>
+                        <th className="px-4 py-5 text-center">GA Ach.</th>
+                        <th className="px-4 py-5 text-center">GA %</th>
+                        <th className="px-4 py-5 text-center">Remaining</th>
+                        <th className="px-4 py-5 text-center">OC Target</th>
+                        <th className="px-4 py-5 text-center">OC Ach.</th>
+                        <th className="px-4 py-5 text-center">OC %</th>
+                        <th className="px-4 py-5 text-center">Entries</th>
+                        <th className="px-8 py-5 text-center">AVG Hours</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {shopSummary.length === 0 ? (
+                        <tr><td colSpan="11" className="px-8 py-10 text-center text-slate-300 italic font-bold">No shop records for this month.</td></tr>
+                      ) : (() => {
+                          // Group shops by manager for visual separation
+                          const grouped = {};
+                          shopSummary.forEach(s => {
+                            if (!grouped[s.manager]) grouped[s.manager] = [];
+                            grouped[s.manager].push(s);
+                          });
+                          return Object.entries(grouped).map(([mgr, shopRows], gi) => (
+                            <React.Fragment key={gi}>
+                              {/* Manager group header row */}
+                              <tr className="bg-slate-900">
+                                <td colSpan="11" className="px-8 py-3">
+                                  <span className="font-black text-xs uppercase tracking-widest text-slate-400">{mgr}</span>
+                                </td>
+                              </tr>
+                              {shopRows.map((s, si) => {
+                                const pctGA = parseFloat(s.completionGA);
+                                const badgeGA = pctGA >= 100
+                                  ? 'bg-emerald-50 text-emerald-600'
+                                  : pctGA >= 50
+                                  ? 'bg-amber-50 text-amber-600'
+                                  : 'bg-red-50 text-red-600';
+                                const pctOC = parseFloat(s.completionOC);
+                                const badgeOC = pctOC >= 100
+                                  ? 'bg-emerald-50 text-emerald-600'
+                                  : pctOC >= 50
+                                  ? 'bg-amber-50 text-amber-600'
+                                  : 'bg-red-50 text-red-600';
+                                return (
+                                  <tr key={si} className="hover:bg-slate-50 transition-colors border-l-4 border-transparent hover:border-slate-200">
+                                    <td className="px-8 py-4 font-black text-slate-700">{s.name}</td>
+                                    <td className="px-6 py-4 text-xs font-black uppercase tracking-widest text-slate-400">{s.manager}</td>
+                                    <td className="px-4 py-4 text-center font-bold text-slate-400">{s.targetGA.toLocaleString()}</td>
+                                    <td className="px-4 py-4 text-center font-black text-red-600">{s.totalGA.toLocaleString()}</td>
+                                    <td className="px-4 py-4 text-center">
+                                      <span className={`px-2 py-1 rounded-lg text-xs font-black ${badgeGA}`}>{s.completionGA}%</span>
+                                    </td>
+                                    <td className="px-4 py-4 text-center font-bold text-red-900">{s.remainingGA.toLocaleString()}</td>
+                                    <td className="px-4 py-4 text-center font-bold text-slate-400">{s.targetOC.toLocaleString()}</td>
+                                    <td className="px-4 py-4 text-center font-black text-blue-600">{s.totalOC.toLocaleString()}</td>
+                                    <td className="px-4 py-4 text-center">
+                                      <span className={`px-2 py-1 rounded-lg text-xs font-black ${badgeOC}`}>{s.completionOC}%</span>
+                                    </td>
+                                    <td className="px-4 py-4 text-center font-bold text-slate-500">{s.entryCount}</td>
+                                    <td className="px-8 py-4 text-center font-bold text-slate-500">{s.avgHours}h</td>
+                                  </tr>
+                                );
+                              })}
+                            </React.Fragment>
+                          ));
+                        })()
+                      }
                     </tbody>
                   </table>
                 </div>
